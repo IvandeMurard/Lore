@@ -92,6 +92,10 @@ Knowledge: ${extracted.knowledge || transcript}`;
 
     return NextResponse.json({
       confirmation: `Knowledge captured from ${technician || "unknown"} for ${tail || "unknown"}. Linked to ${extracted.component || component || "unknown"}, ${extracted.conditions || conditions || "standard"} conditions. Accessible to all certified technicians on this airframe.`,
+      // Trust & Safety: knowledge is stored but flagged as pending expert review.
+      // In production, a validation queue prevents unreviewed knowledge from being served.
+      validated: false,
+      validation_note: "Pending review by certified technical authority before activation in production.",
     });
   } catch (error) {
     console.error("[/api/capture] Error:", error);
