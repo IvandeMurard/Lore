@@ -10,7 +10,7 @@ Team: Ivan · Timothé · El Houssain · Soheil · Daria
 | Person | Role | Primary ownership |
 |--------|------|-------------------|
 | Timothé | API · Speechmatics · Agentic | Voice pipeline, multi-agent orchestration |
-| El Houssain | Back-end · Front-end | API routes, Qdrant, deployment |
+| El Houssain | Back-end · Front-end | API routes, Backboard, deployment |
 | Soheil | Front · Back · Design | UI/UX, waveform, polish |
 | Daria | Audit · QSM · E-learning | Demo data, SOPs, knowledge seeding, QA |
 | Ivan | Product · Design · API · Agentic | Architecture decisions, prompt engineering, pitch |
@@ -24,24 +24,26 @@ Browser
   └── MediaRecorder (audio blob)
         └── Speechmatics RT STT
               └── Orchestrator Agent (LLM)
-                    ├── Capture path → Elicitation Agent → Qdrant (oral_knowledge)
+                    ├── Capture path → Elicitation Agent → Backboard Thread (memory=Auto)
                     └── Query path  → Research Agent
-                                        ├── Qdrant semantic search (oral_knowledge)
-                                        ├── RAG on SOP docs (vector store)
+                                        ├── Backboard Thread per aircraft (oral + history)
+                                        ├── Backboard Thread per technician (senior expertise)
+                                        ├── Backboard RAG (SOP docs auto-indexed)
                                         └── Synthesis Agent → TTS → Audio out
 ```
 
-### Collections (Qdrant)
-- `oral_knowledge` — senior expertise, tagged: technician · aircraft · component · conditions · date
-- `aircraft_history` — per-tail intervention logs, tagged: tail · component · technician · timestamp
-- `sop_chunks` — mock SOP excerpts, chunked + embedded
+### Memory — Backboard (replaces Qdrant)
+- **Thread per aircraft** (`F-GKXA`, `F-HBXA`) — intervention history + oral notes linked to that tail
+- **Thread per technician** (`marc-delaunay`) — senior expertise, portable across all aircraft
+- **RAG** — SOP documents uploaded via Backboard dashboard, auto-indexed, no code needed
+- `memory="Auto"` on every message — Backboard extracts and stores relevant facts automatically
 
 ### Multi-agent layer (bonus — build after core loop works)
 1. **Orchestrator** — classifies intent: Capture / Query / Log
 2. **Elicitation Agent** (Capture) — interviews senior, asks follow-ups, structures output
-3. **Research Agent** (Query) — parallel: Qdrant search + SOP RAG
+3. **Research Agent** (Query) — queries Backboard threads + RAG in parallel
 4. **Synthesis Agent** — merges layers, enforces SOP > oral > history priority
-5. **Memory Agent** — writes to Qdrant, returns confirmation + count
+5. **Memory Agent** — handled natively by Backboard (`memory="Auto"`)
 
 ---
 
@@ -50,8 +52,8 @@ Browser
 **Everyone together.**
 
 - [ ] Clone repo, `npm install`
-- [ ] Share `.env.local` with all API keys (Speechmatics, OpenAI/Claude, Qdrant, ElevenLabs)
-- [ ] Create Qdrant Cloud account → 3 collections
+- [ ] Share `.env.local` with all API keys (Speechmatics, OpenAI/Claude, Backboard, ElevenLabs)
+- [ ] El Houssain: créer compte Backboard → récupérer API key → créer threads F-GKXA + marc-delaunay
 - [ ] El Houssain: deploy to Vercel → get staging URL
 - [ ] Timothé: confirm Speechmatics API key works (test call)
 - [ ] Ivan: walk team through demo script and 3-min scenario
@@ -85,39 +87,42 @@ Browser
 **Owner: El Houssain + Ivan**
 
 ### El Houssain
-- `lib/qdrant.ts` — typed Qdrant client, embed + upsert + search helpers
+- `lib/backboard.ts` — client Backboard, helpers getThread / sendMessage / uploadDoc
+  ```typescript
+  // 1 thread = 1 avion ou 1 technicien
+  // memory="Auto" → Backboard extrait et stocke les faits automatiquement
+  // Pas d'embedding manuel, pas d'upsert
+  ```
 - `app/api/capture/route.ts`
   ```
   POST /api/capture
-  body: { transcript, technician, tail, component, conditions }
-  → LLM extracts structured knowledge
-  → embed → upsert oral_knowledge collection
-  → return { id, confirmation }
+  body: { transcript, technician, tail }
+  → sendMessage(thread=technician, content=transcript, memory="Auto")
+  → sendMessage(thread=tail, content=transcript, memory="Auto")
+  → return { confirmation }
   ```
 - `app/api/query/route.ts`
   ```
   POST /api/query
   body: { transcript, tail }
-  → embed query
-  → parallel: Qdrant search oral_knowledge + Qdrant search sop_chunks
-  → LLM synthesis (SOP > oral > history)
+  → sendMessage(thread=tail, content=question, memory="Auto")
+    avec documents=SOPs (RAG auto Backboard)
   → return { response, sources }
   ```
 - `app/api/log/route.ts`
   ```
   POST /api/log
   body: { transcript, tail, technician }
-  → LLM extracts log entry
-  → upsert aircraft_history
-  → return { confirmation, intervention_count }
+  → sendMessage(thread=tail, content=transcript, memory="Auto")
+  → return { confirmation }
   ```
 
 ### Ivan
-- System prompt engineering for each agent role
-- SOP priority enforcement in synthesis prompt
-- Test each endpoint with curl / Postman
+- Upload SOP docs sur le dashboard Backboard (PDF/TXT) → RAG disponible immédiatement
+- Vérifier que `BACKBOARD_API_KEY` est dans `.env.local` et Vercel
+- Tester chaque endpoint avec Postman dès que El Houssain livre
 
-**Exit criteria:** Postman confirms all 3 endpoints return correct responses.
+**Exit criteria:** Postman confirms all 3 endpoints return correct responses. Backboard threads visibles dans le dashboard.
 
 ---
 
@@ -179,11 +184,11 @@ Browser
 - At least 6 entries total across 2 aircraft
 
 ### Ivan
-- `scripts/seed.ts` — reads JSON files, embeds, upserts to Qdrant
-- `scripts/seed-sops.ts` — chunks SOPs, embeds, upserts `sop_chunks`
-- Run both seeds, confirm data is in Qdrant
+- Upload `cfm56-5b-72-21.txt` et `cfm56-5b-72-00.txt` sur le dashboard Backboard → RAG opérationnel
+- Envoyer les notes de Marc via `POST /api/capture` pour peupler les threads Backboard
+- Confirmer que la query Thomas → réponse Marc fonctionne
 
-**Exit criteria:** `npm run seed` populates Qdrant. Query endpoint returns Marc's note when asked about F-GKXA N1 vibration.
+**Exit criteria:** Query endpoint returns Marc's note when asked about F-GKXA N1 vibration. Threads visibles dans le dashboard Backboard.
 
 ---
 
@@ -266,7 +271,7 @@ Every feature request goes through: **"Does this make the 3-minute demo better?"
 | Risk | Probability | Mitigation |
 |------|-------------|------------|
 | Speechmatics fails live | Medium | Pre-recorded audio fallback ready |
-| Qdrant latency > 3s | Low | Cache Marc's notes in memory at startup |
+| Backboard latency > 3s | Low | Pré-charger les threads au démarrage de l'app |
 | TTS sounds robotic | Low | Test 3 voices, pick best before demo |
 | Scope creep | High | Ivan enforces scope lock continuously |
 | Team energy crash 3-5am | Medium | Sleep rotation: 2 devs sleep, 2 work |
