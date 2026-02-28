@@ -1,15 +1,15 @@
 Title,Description,Priority,Status,Label,Assignee
-[SETUP] Initialize Next.js project,"Clone repo, npm install, confirm dev server runs. TypeScript + Tailwind configured.",Urgent,In Progress,Setup,Saheil
-[SETUP] Configure API clients & env,"Create lib/ folder with typed clients for Speechmatics / OpenAI / Qdrant / ElevenLabs. Copy .env.example to .env.local, fill keys.",Urgent,Todo,Setup,Saheil
-[SETUP] Deploy to Vercel (staging),"Connect GitHub repo to Vercel. Add all env vars. Get public URL for judges. Do early — not last minute.",High,Todo,Setup,Saheil
+[SETUP] Initialize Next.js project,"Clone repo, npm install, confirm dev server runs. TypeScript + Tailwind configured.",Urgent,In Progress,Setup,El Houssain
+[SETUP] Configure API clients & env,"Create lib/ folder with typed clients for Speechmatics / OpenAI / Qdrant / ElevenLabs. Copy .env.example to .env.local, fill keys.",Urgent,Todo,Setup,El Houssain
+[SETUP] Deploy to Vercel (staging),"Connect GitHub repo to Vercel. Add all env vars. Get public URL for judges. Do early — not last minute.",High,Todo,Setup,El Houssain
 [VOICE] Browser audio recording,"Implement useAudioRecorder hook using MediaRecorder API. Start/stop on button hold. Output: audio blob (WebM). Test in Chrome.",Urgent,Todo,Voice,Timothé
 [VOICE] Speechmatics real-time STT,"Integrate Speechmatics RT transcription via WebSocket. Stream audio chunks. Accumulate transcript. Handle final vs partial events. Return transcript on silence.",Urgent,Todo,Voice,Timothé
 [VOICE] TTS voice output,"Integrate ElevenLabs TTS. Input: text string. Output: audio auto-played in browser. Test 3 voices, pick the best. Fallback: OpenAI TTS.",High,Todo,Voice,Timothé
 [VOICE] Waveform visualizer,"Animated waveform using Web Audio API AnalyserNode. Active during recording and TTS playback. Dark bg #0a0a0a, orange bars #f97316.",Low,Todo,UI,Soheil
-[MEMORY] Qdrant setup — 3 collections,"Create Qdrant Cloud account. Create: oral_knowledge (senior expertise), aircraft_history (per-tail logs), sop_chunks (RAG source). Configure in lib/qdrant.ts.",Urgent,Todo,Memory,Saheil
-[MEMORY] Capture endpoint POST /api/capture,"Input: transcript + technician + tail + component + conditions. LLM extracts structured knowledge. Embed + upsert oral_knowledge. Return id + confirmation.",Urgent,Todo,Memory,Saheil
-[MEMORY] Query endpoint POST /api/query,"Input: transcript + tail. Embed query. Parallel: Qdrant search oral_knowledge + sop_chunks. LLM synthesis (SOP > oral > history priority). Return response + sources.",Urgent,Todo,Memory,Saheil
-[MEMORY] Log endpoint POST /api/log,"Input: transcript + tail + technician. LLM extracts log entry. Upsert aircraft_history. Return confirmation + total intervention count for this tail.",High,Todo,Memory,Saheil
+[MEMORY] Qdrant setup — 3 collections,"Create Qdrant Cloud account. Create: oral_knowledge (senior expertise), aircraft_history (per-tail logs), sop_chunks (RAG source). Configure in lib/qdrant.ts.",Urgent,Todo,Memory,El Houssain
+[MEMORY] Capture endpoint POST /api/capture,"Input: transcript + technician + tail + component + conditions. LLM extracts structured knowledge. Embed + upsert oral_knowledge. Return id + confirmation.",Urgent,Todo,Memory,El Houssain
+[MEMORY] Query endpoint POST /api/query,"Input: transcript + tail. Embed query. Parallel: Qdrant search oral_knowledge + sop_chunks. LLM synthesis (SOP > oral > history priority). Return response + sources.",Urgent,Todo,Memory,El Houssain
+[MEMORY] Log endpoint POST /api/log,"Input: transcript + tail + technician. LLM extracts log entry. Upsert aircraft_history. Return confirmation + total intervention count for this tail.",High,Todo,Memory,El Houssain
 [AGENT] Orchestrator agent,"lib/orchestrator.ts — classifies intent from transcript: capture | query | log. Routes to correct endpoint. Built on LLM tool use.",High,Todo,Agentic,Timothé
 [AGENT] Elicitation agent (Capture mode),"lib/elicitation-agent.ts — after senior speaks, generates 1 targeted follow-up question. Re-records answer. Structures final knowledge object before upsert.",High,Todo,Agentic,Timothé
 [DATA] Mock SOP documents,"Create data/sops/cfm56-5b-72-21.txt (N1 vibration) and cfm56-5b-72-00.txt (fan inspection). 10-15 realistic-looking procedure entries each.",High,Todo,Demo Data,Daria

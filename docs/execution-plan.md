@@ -1,7 +1,7 @@
 # Lore — Execution Plan (24h)
 
 Hackathon: Feb 28 15:00 → Mar 1 20:00
-Team: Ivan · Timothé · Saheil · Soheil · Daria
+Team: Ivan · Timothé · El Houssain · Soheil · Daria
 
 ---
 
@@ -10,7 +10,7 @@ Team: Ivan · Timothé · Saheil · Soheil · Daria
 | Person | Role | Primary ownership |
 |--------|------|-------------------|
 | Timothé | API · Speechmatics · Agentic | Voice pipeline, multi-agent orchestration |
-| Saheil | Back-end · Front-end | API routes, Qdrant, deployment |
+| El Houssain | Back-end · Front-end | API routes, Qdrant, deployment |
 | Soheil | Front · Back · Design | UI/UX, waveform, polish |
 | Daria | Audit · QSM · E-learning | Demo data, SOPs, knowledge seeding, QA |
 | Ivan | Product · Design · API · Agentic | Architecture decisions, prompt engineering, pitch |
@@ -52,7 +52,7 @@ Browser
 - [ ] Clone repo, `npm install`
 - [ ] Share `.env.local` with all API keys (Speechmatics, OpenAI/Claude, Qdrant, ElevenLabs)
 - [ ] Create Qdrant Cloud account → 3 collections
-- [ ] Saheil: deploy to Vercel → get staging URL
+- [ ] El Houssain: deploy to Vercel → get staging URL
 - [ ] Timothé: confirm Speechmatics API key works (test call)
 - [ ] Ivan: walk team through demo script and 3-min scenario
 
@@ -82,9 +82,9 @@ Browser
 
 ## Phase 2 — Memory Core (20:00–01:00)
 
-**Owner: Saheil + Ivan**
+**Owner: El Houssain + Ivan**
 
-### Saheil
+### El Houssain
 - `lib/qdrant.ts` — typed Qdrant client, embed + upsert + search helpers
 - `app/api/capture/route.ts`
   ```
@@ -123,7 +123,7 @@ Browser
 
 ## Phase 3 — Full Loop Integration (01:00–05:00)
 
-**Owner: Timothé (agent orchestration) + Saheil (wiring)**
+**Owner: Timothé (agent orchestration) + El Houssain (wiring)**
 
 ### Timothé
 - `lib/orchestrator.ts` — Orchestrator Agent
@@ -137,7 +137,7 @@ Browser
   - Input: text string
   - Output: audio blob → autoplay in browser
 
-### Saheil
+### El Houssain
 - Wire full loop in `app/page.tsx`:
   `hold button → record → STT → orchestrator → endpoint → TTS → play`
 - Error handling: API failures → graceful fallback text response
