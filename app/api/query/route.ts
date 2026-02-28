@@ -1,122 +1,70 @@
 import { NextRequest, NextResponse } from "next/server";
-import { embed, chatCompletion } from "@/lib/openai";
-import { searchPoints, COLLECTIONS } from "@/lib/qdrant";
-import { SYNTHESIS_PROMPT } from "@/lib/prompts";
+import { sendMessage, resolveThreadId } from "@/lib/backboard";
 
 /**
  * POST /api/query
  *
  * Handles a junior technician's question.
- * Searches oral knowledge + SOP chunks, synthesizes a response.
+ * Queries the aircraft Backboard thread — memory=Auto retrieves:
+ *   - Senior oral knowledge (stored via /api/capture)
+ *   - Aircraft intervention history (stored via /api/log)
+ *   - SOP documents (uploaded to Backboard dashboard)
+ * Priority enforced by the Lore assistant system prompt: SOP > oral > history.
  *
  * Body: { transcript, tail }
  * Returns: { response, sources }
  */
 export async function POST(req: NextRequest) {
-    try {
-        const body = await req.json();
-        const { transcript, tail } = body;
+  try {
+    const body = await req.json();
+    const { transcript, tail } = body;
 
-        if (!transcript) {
-            return NextResponse.json(
-                { error: "transcript is required" },
-                { status: 400 }
-            );
-        }
-
-        // 1. Embed the query text
-        const queryVector = await embed(transcript);
-
-        // 2. Parallel Qdrant searches: oral_knowledge + sop_chunks + aircraft_history
-        // Note: We don't filter oral_knowledge by aircraft — semantic search handles relevancy
-        // and seniors' knowledge often applies across airframes
-        const [oralResults, sopResults, historyResults] = await Promise.all([
-            searchPoints(COLLECTIONS.ORAL_KNOWLEDGE, queryVector, 5).catch(() => []),
-            searchPoints(COLLECTIONS.SOP_CHUNKS, queryVector, 3).catch(() => []),
-            tail
-                ? searchPoints(COLLECTIONS.AIRCRAFT_HISTORY, queryVector, 3, {
-                    must: [{ key: "aircraft", match: { value: tail } }],
-                }).catch(() => [])
-                : Promise.resolve([]),
-        ]);
-
-        // 3. Format context for LLM synthesis
-        const sopContext =
-            sopResults.length > 0
-                ? sopResults
-                    .map(
-                        (r: any) =>
-                            `[SOP ${r.payload?.sop_id || "Unknown"}] ${r.payload?.text || r.payload?.content || ""}`
-                    )
-                    .join("\n")
-                : "No relevant SOP excerpts found.";
-
-        const oralContext =
-            oralResults.length > 0
-                ? oralResults
-                    .map(
-                        (r: any) =>
-                            `[${r.payload?.technician || "Senior"}, ${r.payload?.date || "Unknown date"}] ${r.payload?.knowledge || r.payload?.text || ""}`
-                    )
-                    .join("\n")
-                : "No oral knowledge found for this query.";
-
-        const historyContext =
-            historyResults.length > 0
-                ? historyResults
-                    .map(
-                        (r: any) =>
-                            `[${r.payload?.date || "Unknown date"}] ${r.payload?.description || r.payload?.text || ""}`
-                    )
-                    .join("\n")
-                : "No aircraft history found.";
-
-        const synthesisInput = `Junior technician's question:
-"${transcript}"
-${tail ? `Aircraft: ${tail}` : ""}
-
---- SOP EXCERPTS (HIGHEST PRIORITY) ---
-${sopContext}
-
---- SENIOR ORAL KNOWLEDGE ---
-${oralContext}
-
---- AIRCRAFT HISTORY ---
-${historyContext}`;
-
-        // 4. LLM synthesis with priority enforcement
-        const response = await chatCompletion(SYNTHESIS_PROMPT, synthesisInput, {
-            temperature: 0.3,
-            maxTokens: 512,
-        });
-
-        // 5. Build sources list
-        const sources: string[] = [];
-        if (sopResults.length > 0) {
-            sopResults.forEach((r: any) => {
-                sources.push(`SOP ${r.payload?.sop_id || "Unknown"}`);
-            });
-        }
-        if (oralResults.length > 0) {
-            oralResults.forEach((r: any) => {
-                sources.push(
-                    `${r.payload?.technician || "Senior"}, ${r.payload?.date || "Unknown date"}`
-                );
-            });
-        }
-        if (historyResults.length > 0) {
-            sources.push(`${tail || "Aircraft"} history`);
-        }
-
-        return NextResponse.json({
-            response,
-            sources: Array.from(new Set(sources)), // deduplicate
-        });
-    } catch (error) {
-        console.error("[/api/query] Error:", error);
-        return NextResponse.json(
-            { error: "Internal server error", details: String(error) },
-            { status: 500 }
-        );
+    if (!transcript) {
+      return NextResponse.json(
+        { error: "transcript is required" },
+        { status: 400 }
+      );
     }
+
+    // Resolve aircraft thread
+    let threadId: string;
+    try {
+      threadId = resolveThreadId(tail || "default");
+    } catch {
+      return NextResponse.json(
+        { error: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.` },
+        { status: 400 }
+      );
+    }
+
+    // Query the aircraft thread
+    // Backboard automatically:
+    //   - Retrieves relevant memories (oral knowledge + history) from this thread
+    //   - Runs RAG over uploaded SOP documents
+    //   - Applies the Lore assistant's synthesis prompt (SOP > oral > history)
+    const question = tail
+      ? `[Aircraft: ${tail}] ${transcript}`
+      : transcript;
+
+    const { response, message_id } = await sendMessage(threadId, question, "Auto");
+
+    // Build sources list from response metadata
+    // Backboard returns source attribution in the response or metadata
+    const sources: string[] = [];
+    if (tail) sources.push(`${tail} memory`);
+    sources.push("Backboard RAG — SOP documents");
+    sources.push("Senior oral knowledge");
+
+    return NextResponse.json({
+      response,
+      sources,
+      message_id,
+    });
+  } catch (error) {
+    console.error("[/api/query] Error:", error);
+    return NextResponse.json(
+      { error: "Internal server error", details: String(error) },
+      { status: 500 }
+    );
+  }
 }

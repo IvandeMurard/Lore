@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed": "node scripts/seed.mjs"
+    "seed": "node scripts/seed.mjs",
+    "setup-backboard": "npx tsx scripts/setup-backboard.ts",
+    "seed-backboard": "npx tsx scripts/seed-backboard.ts"
   },
   "dependencies": {
     "@langchain/openai": "^0.1.3",
