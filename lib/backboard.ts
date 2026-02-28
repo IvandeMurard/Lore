@@ -1,125 +1,91 @@
-// ─────────────────────────────────────────────
-// LORE — Backboard client
-// Replaces lib/qdrant.ts
-// One assistant (Lore) + one thread per aircraft or technician
-// memory="Auto" → Backboard extracts and persists facts automatically
-// ─────────────────────────────────────────────
+import { BackboardClient } from "backboard-sdk";
 
-const BASE = "https://api.backboard.io/v1";
-const KEY = process.env.BACKBOARD_API_KEY!;
+const apiKey = process.env.BACKBOARD_API_KEY;
 
-const headers = () => ({
-  "X-API-Key": KEY,
-  "Content-Type": "application/json",
-});
+if (!apiKey) {
+    throw new Error("BACKBOARD_API_KEY is not set.");
+}
 
-// ── Thread resolution ─────────────────────────
-// Thread IDs are set once (via setup-backboard script) and stored in env:
-//   BACKBOARD_THREAD_F_GKXA    → aircraft thread
-//   BACKBOARD_THREAD_F_HBXA    → aircraft thread
-//   BACKBOARD_THREAD_MARC      → technician thread
-//   BACKBOARD_ASSISTANT_ID     → the Lore assistant
+const backboard = new BackboardClient({ apiKey });
+
+function envThreadKey(key: string): string {
+    return `BACKBOARD_THREAD_${key
+        .toUpperCase()
+        .replace(/-/g, "_")
+        .replace(/ /g, "_")}`;
+}
 
 export function resolveThreadId(key: string): string {
-  const envKey = `BACKBOARD_THREAD_${key.toUpperCase().replace(/-/g, "_").replace(/ /g, "_")}`;
-  const id = process.env[envKey];
-  if (!id) throw new Error(`No Backboard thread found for key "${key}". Run npm run setup-backboard.`);
-  return id;
+    const envKey = envThreadKey(key);
+    const threadId = process.env[envKey];
+
+    if (!threadId) {
+        throw new Error(
+            `No Backboard thread found for key "${key}" (${envKey}). Run npm run setup-backboard.`
+        );
+    }
+
+    return threadId;
 }
 
 export function getAssistantId(): string {
-  const id = process.env.BACKBOARD_ASSISTANT_ID;
-  if (!id) throw new Error("BACKBOARD_ASSISTANT_ID not set. Run npm run setup-backboard.");
-  return id;
+    const assistantId = process.env.BACKBOARD_ASSISTANT_ID;
+    if (!assistantId) {
+        throw new Error("BACKBOARD_ASSISTANT_ID not set. Run npm run setup-backboard.");
+    }
+    return assistantId;
 }
 
-// ── Core API calls ────────────────────────────
+function mapMemoryMode(mode: "Auto" | "ReadOnly" | "Off"): "Auto" | "Readonly" | "off" {
+    if (mode === "ReadOnly") return "Readonly";
+    if (mode === "Off") return "off";
+    return "Auto";
+}
 
-/**
- * Send a message to a thread and get the assistant's response.
- * memory="Auto" → Backboard extracts and stores relevant facts.
- */
 export async function sendMessage(
-  threadId: string,
-  content: string,
-  memory: "Auto" | "ReadOnly" | "Off" = "Auto"
+    threadId: string,
+    content: string,
+    memory: "Auto" | "ReadOnly" | "Off" = "Auto"
 ): Promise<{ response: string; message_id: string }> {
-  const res = await fetch(`${BASE}/threads/${threadId}/messages`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({
-      role: "user",
-      content,
-      memory,
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Backboard sendMessage failed: ${res.status} — ${text}`);
-  }
-
-  const data = await res.json();
-
-  // Extract the assistant's reply text
-  const reply =
-    data.response ||
-    data.content ||
-    data.messages?.find((m: any) => m.role === "assistant")?.content ||
-    "";
-
-  return {
-    response: reply,
-    message_id: data.id || data.message_id || "",
-  };
-}
-
-/**
- * Count messages in a thread (used for intervention count in /api/log).
- */
-export async function countMessages(threadId: string): Promise<number> {
-  try {
-    const res = await fetch(`${BASE}/threads/${threadId}/messages`, {
-      headers: { "X-API-Key": KEY },
+    const response = await backboard.addMessage(threadId, {
+        content,
+        memory: mapMemoryMode(memory),
+        stream: false,
     });
-    if (!res.ok) return 0;
-    const data = await res.json();
-    return data.total ?? data.count ?? data.data?.length ?? 0;
-  } catch {
-    return 0;
-  }
+
+    if (!("content" in response)) {
+        throw new Error("Unexpected streaming response from Backboard.");
+    }
+
+    return {
+        response: response.content || "",
+        message_id: response.messageId || "",
+    };
 }
 
-/**
- * Create a new thread linked to an assistant.
- * Used by setup-backboard script — not called at runtime.
- */
+export async function countMessages(threadId: string): Promise<number> {
+    try {
+        const thread = await backboard.getThread(threadId);
+        return Array.isArray(thread.messages) ? thread.messages.length : 0;
+    } catch {
+        return 0;
+    }
+}
+
 export async function createThread(assistantId: string): Promise<string> {
-  const res = await fetch(`${BASE}/assistants/${assistantId}/threads`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`createThread failed: ${res.status}`);
-  const data = await res.json();
-  return data.id || data.thread_id;
+    const thread = await backboard.createThread(assistantId);
+    return thread.threadId;
 }
 
-/**
- * Create a new assistant with given instructions.
- * Used by setup-backboard script — not called at runtime.
- */
 export async function createAssistant(
-  name: string,
-  instructions: string,
-  model: string = "gpt-4o"
+    name: string,
+    instructions: string,
+    _model: string = "gpt-4o"
 ): Promise<string> {
-  const res = await fetch(`${BASE}/assistants`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({ name, instructions, model }),
-  });
-  if (!res.ok) throw new Error(`createAssistant failed: ${res.status}`);
-  const data = await res.json();
-  return data.id || data.assistant_id;
+    const assistant = await backboard.createAssistant({
+        name,
+        system_prompt: instructions,
+    });
+
+    return assistant.assistantId;
 }
