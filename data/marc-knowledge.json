@@ -1,0 +1,56 @@
+[
+    {
+        "technician": "Marc Delaunay",
+        "date": "2025-10-14",
+        "aircraft": "F-GKXA",
+        "component": "CFM56-5B fan section",
+        "conditions": "cold weather, T < 8°C",
+        "knowledge": "F-GKXA shows N1 harmonic resonance 2-3 units in cold weather below 8°C. This is a known characteristic of this specific airframe, not a defect. I've seen it 4 times in 8 years. Monitor across 2 cycles before escalating. Do not ground the aircraft for this alone.",
+        "confidence": 0.95
+    },
+    {
+        "technician": "Marc Delaunay",
+        "date": "2025-08-22",
+        "aircraft": "F-GKXA",
+        "component": "CFM56-5B HP compressor",
+        "conditions": "standard",
+        "knowledge": "Blade inspection on F-GKXA HPC stage 3: slight leading edge erosion, within limits. Mark for tracking every 200 cycles. This airframe tends to show erosion earlier than fleet average due to its route pattern through coastal environments.",
+        "confidence": 0.90
+    },
+    {
+        "technician": "Marc Delaunay",
+        "date": "2025-06-10",
+        "aircraft": "F-GKXA",
+        "component": "CFM56-5B oil system",
+        "conditions": "after long haul",
+        "knowledge": "F-GKXA oil consumption runs slightly higher than fleet average — about 0.3 qt/hr vs 0.2 qt/hr typical. This has been stable for 3 years. It's within limits. Don't flag it as trending unless it exceeds 0.4 qt/hr.",
+        "confidence": 0.85
+    },
+    {
+        "technician": "Marc Delaunay",
+        "date": "2025-04-18",
+        "aircraft": "F-GHQJ",
+        "component": "CFM56-5B fan section",
+        "conditions": "standard",
+        "knowledge": "F-GHQJ fan blade #7 was replaced 400 cycles ago. The new blade has a slightly different vibration signature during high power settings. This is normal for replacement blades and settles after ~500 cycles. No action needed.",
+        "confidence": 0.88
+    },
+    {
+        "technician": "Marc Delaunay",
+        "date": "2025-03-05",
+        "aircraft": "F-GHQJ",
+        "component": "CFM56-5B fuel system",
+        "conditions": "hot weather, T > 35°C",
+        "knowledge": "F-GHQJ has a known fuel metering unit delay on hot starts above 35°C. Takes about 2 extra seconds to stabilize. It's a characteristic of the older FMU variant installed. Within all limits but worth noting for new technicians who might mistake it for a malfunction.",
+        "confidence": 0.92
+    },
+    {
+        "technician": "Marc Delaunay",
+        "date": "2025-01-20",
+        "aircraft": "F-GKXA",
+        "component": "CFM56-5B gearbox",
+        "conditions": "cold start",
+        "knowledge": "F-GKXA accessory gearbox makes a brief whine during first start of the day in winter. Lasts about 15 seconds then disappears. It's the accessory gearbox oil warming up. Completely normal. I've monitored this for 5 winters. No degradation trend.",
+        "confidence": 0.93
+    }
+]

@@ -1,0 +1,37 @@
+STANDARD OPERATING PROCEDURE
+SOP Reference: 72-00-00
+Engine: CFM56-5B Series
+Subject: Fan Section General Inspection Procedure
+
+1. SCOPE
+This procedure covers the routine visual and manual inspection of the CFM56-5B fan section during scheduled maintenance checks.
+
+2. INSPECTION FREQUENCY
+- A-Check: Visual inspection of accessible fan blades and spinner.
+- C-Check: Full fan section inspection including borescope of fan disk.
+- Engine change: Complete fan module inspection per AMM 72-00-00-800.
+
+3. VISUAL INSPECTION PROCEDURE
+
+3.1 Fan Blades
+- Inspect all fan blades for nicks, dents, erosion, and foreign object damage.
+- Nicks up to 2mm depth on leading edge: ACCEPTABLE — blend per AMM 72-21-01-100.
+- Nicks 2mm to 4mm: ENGINEERING REVIEW required before continued operation.
+- Nicks above 4mm or cracks of any size: BLADE REPLACEMENT required.
+
+3.2 Fan Spinner
+- Check spinner for cracks, dents, and secure attachment.
+- Verify all spinner screws are present and torqued.
+
+3.3 Fan Containment Case
+- Inspect for rubbing indicators, oil leaks, and structural damage.
+- Any evidence of blade tip rubbing requires escalation to engineering.
+
+4. BLADE EROSION MONITORING
+
+4.1 Leading edge erosion is expected on high-cycle engines.
+4.2 Record erosion measurements at each C-Check and compare to limits in AMM 72-21-01-300.
+4.3 Erosion within limits: continue monitoring. Flag if rate exceeds 0.1mm per 1000 cycles.
+
+5. DOCUMENTATION
+All inspection findings must be recorded in the engine logbook with reference to this SOP. Photographs are recommended for any findings above routine.

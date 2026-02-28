@@ -1,0 +1,48 @@
+STANDARD OPERATING PROCEDURE
+SOP Reference: 72-21-00
+Engine: CFM56-5B Series
+Subject: N1 Vibration Monitoring and Escalation Procedures
+
+1. SCOPE
+This procedure covers the monitoring, assessment, and escalation of N1 shaft vibration readings on CFM56-5B engines installed on Airbus A320 family aircraft.
+
+2. VIBRATION LIMITS
+
+2.1 Normal Operating Range
+- N1 vibration below 2.0 units: NORMAL — no action required.
+- N1 vibration 2.0 to 4.0 units: MONITOR — log reading, compare to trend data, re-check within 2 flight cycles.
+
+2.2 Escalation Thresholds
+- N1 vibration 4.0 to 5.0 units: CAUTION — ground the engine for detailed inspection. Perform fan blade balance check per AMM 72-21-00-500.
+- N1 vibration above 5.0 units: AOG — engine must not operate. Notify MCC immediately. Borescope inspection required per AMM 72-21-00-710.
+
+3. MONITORING PROCEDURE
+
+3.1 Record the following at each check:
+- N1 vibration reading (units)
+- N2 vibration reading (units)
+- OAT (Outside Air Temperature) at time of reading
+- Engine run time since last inspection
+- Any unusual sounds or visual indicators
+
+3.2 Trending
+- Compare current reading to last 5 readings for the same engine/airframe combination.
+- If reading has increased by more than 0.5 units from the previous check, flag for engineering review.
+- If reading has been stable or decreasing, continue routine monitoring.
+
+4. COLD WEATHER OPERATIONS
+
+4.1 At OAT below 10°C, N1 vibration readings may show temporary increases of 0.5 to 1.0 units during the first 10 minutes of operation. This is within normal characteristics.
+4.2 Allow engine to stabilize for minimum 10 minutes at idle before recording official vibration readings in cold conditions.
+4.3 Do NOT escalate based on cold-start readings alone.
+
+5. FAN SECTION INSPECTION
+
+5.1 If vibration is above MONITOR threshold after temperature stabilization:
+- Perform visual inspection of all fan blades for foreign object damage.
+- Check fan blade tip clearances per AMM 72-21-01-200.
+- Inspect fan containment case for rubbing indicators.
+- Record findings and compare to last borescope report.
+
+6. DOCUMENTATION
+All vibration readings and assessments must be logged in the aircraft technical log and the engine trend monitoring system within 24 hours of the check.
