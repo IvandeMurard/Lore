@@ -1,0 +1,150 @@
+import asyncio
+import os
+import platform
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Speechmatics Imports
+from speechmatics.batch import AsyncClient as SpeechmaticsSTTClient
+from speechmatics.tts import AsyncClient as SpeechmaticsTTSClient, Voice, OutputFormat
+
+# Backboard Import
+from backboard import BackboardClient
+
+load_dotenv()
+
+# ==========================================
+# 0. SETUP DUMMY MANUAL
+# ==========================================
+def create_dummy_manual():
+    """Creates a fake aviation manual for Lore to read."""
+    filename = "maintenance_manual.txt"
+    if not Path(filename).exists():
+        print(f"📄 Creating dummy manual: {filename}...")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(
+                "Aviation Maintenance Manual - Hydraulic Systems.\n"
+                "Issue: Low pressure warning on left engine hydraulic actuator.\n"
+                "Resolution Steps:\n"
+                "1. Check fluid levels in the main reservoir.\n"
+                "2. If fluid is nominal, inspect the actuator O-rings for leaks.\n"
+                "3. If replacing the actuator, the standard torque setting for the mounting bolts is exactly 65 foot-pounds.\n"
+                "4. Always lubricate O-rings with Skydrol before seating.\n"
+            )
+    return filename
+
+
+# ==========================================
+# 1. THE MOUTH: Speechmatics TTS
+# ==========================================
+async def speak(text: str):
+    """Takes Lore's text response and plays it as high-quality audio."""
+    print("🔊 Generating Lore's voice using Speechmatics TTS...")
+    output_file = "lore_output.wav"
+    
+    try:
+        # Note: We are using Voice.SARAH as per your docs. 
+        # If Speechmatics has a male voice like Voice.MARCUS, try swapping it!
+        async with SpeechmaticsTTSClient() as tts_client:
+            async with await tts_client.generate(
+                text=text,
+                voice=Voice.SARAH, 
+                output_format=OutputFormat.WAV_16000
+            ) as response:
+                audio = b''.join([chunk async for chunk in response.content.iter_chunked(1024)])
+                with open(output_file, "wb") as f:
+                    f.write(audio)
+        
+        # Play the audio file depending on your operating system
+        print("▶️  Playing response...")
+        if platform.system() == "Darwin":       # macOS
+            os.system(f"afplay {output_file}")
+        elif platform.system() == "Windows":    # Windows
+            os.system(f"start {output_file}")
+        else:                                   # Linux
+            os.system(f"aplay {output_file} || aplay {output_file}")
+            
+    except Exception as e:
+        print(f"⚠️ TTS Error: {e}")
+
+
+# ==========================================
+# MAIN APP FLOW
+# ==========================================
+async def main():
+    print("🛫 Booting up Project Lore...")
+    manual_path = create_dummy_manual()
+    
+    # ---------------------------------------------------------
+    # A. BACKBOARD BRAIN SETUP & DOCUMENT UPLOAD (RAG)
+    # ---------------------------------------------------------
+    bb_client = BackboardClient(api_key=os.getenv("BACKBOARD_API_KEY"))
+    
+    lore_system_prompt = """
+    You are 'Lore', a retired senior aviation technician AI. You answer questions strictly 
+    based on the manuals and documents uploaded to you. Keep your answers under 3 sentences. 
+    Be direct, practical, and prioritize safety. Speak like a veteran mechanic.
+    """
+    
+    print("🧠 Initializing Lore and uploading manuals to Backboard...")
+    assistant = await bb_client.create_assistant(
+        name="Lore - Senior Aviation Tech",
+        system_prompt=lore_system_prompt
+    )
+    
+    # Upload the document to the assistant
+    document = await bb_client.upload_document_to_assistant(
+        assistant.assistant_id,
+        manual_path
+    )
+    
+    # Wait for Backboard to read and index the manual
+    print("⏳ Waiting for Lore to read the manual...")
+    while True:
+        status = await bb_client.get_document_status(document.document_id)
+        if status.status == "indexed":
+            print("✅ Manual memorized successfully!")
+            break
+        elif status.status == "failed":
+            print(f"❌ Document indexing failed: {status.status_message}")
+            return
+        await asyncio.sleep(2)
+        
+    thread = await bb_client.create_thread(assistant.assistant_id)
+
+    # ---------------------------------------------------------
+    # B. THE EARS (Speechmatics STT)
+    # ---------------------------------------------------------
+    audio_filename = "audio.wav"
+    user_text = ""
+    
+    if not Path(audio_filename).exists():
+        print(f"\n⚠️ Could not find '{audio_filename}'. Defaulting to text input.")
+        user_text = "Hey Lore, I'm replacing the left engine hydraulic actuator. What's the torque setting for the mounting bolts?"
+    else:
+        print("\n🎙️  Listening to mechanic's audio...")
+        async with SpeechmaticsSTTClient() as sm_client:
+            result = await sm_client.transcribe(audio_filename)
+            user_text = result.transcript_text
+            
+    print(f"\n🧑‍🔧 Junior Mechanic asks: '{user_text}'\n")
+
+    # ---------------------------------------------------------
+    # C. QUERY LORE & SPEAK
+    # ---------------------------------------------------------
+    print("🤖 Lore is referencing the manuals...")
+    response = await bb_client.add_message(
+        thread_id=thread.thread_id,
+        content=user_text,
+        stream=False
+    )
+    
+    print("==================================================")
+    print(f"🛠️  LORE SAYS:\n{response.content}")
+    print("==================================================\n")
+
+    # Speak the response!
+    await speak(response.content)
+
+if __name__ == "__main__":
+    asyncio.run(main())
