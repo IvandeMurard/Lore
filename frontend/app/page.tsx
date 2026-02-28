@@ -493,13 +493,36 @@ export default function LorePage() {
       const finalTranscript = await stopRealtimeTranscription();
       stopVoiceMeter();
       if (!finalTranscript) {
-        setTranscript("I'm on F-GKXA, CFM56-5B. Unusual N1 vibration, not in the job card…");
+        setTranscript("No speech detected. Try again.");
+        return;
       }
+
+      setIsLoading(true);
+      setResponse("");
+      setSources([]);
+
+      const res = await fetch("/api/capture", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: finalTranscript,
+          technician: "Marc Delaunay",
+          tail: "F-GKXA",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Capture failed.");
+
+      setResponse(data.confirmation || "Knowledge captured.");
+      setSources([{ type: "oral", label: "Captured just now" }]);
     } catch (error) {
-      console.error("Capture transcription failed:", error);
+      console.error("Capture failed:", error);
       stopVoiceMeter();
-      const message = error instanceof Error ? error.message : "Transcription failed.";
-      setTranscript(`Transcription error: ${message}`);
+      const message = error instanceof Error ? error.message : "Capture failed.";
+      setResponse(`Error: ${message}`);
+    } finally {
+      setIsLoading(false);
     }
   }, [isRecording, stopRealtimeTranscription, stopVoiceMeter]);
 
@@ -548,25 +571,38 @@ export default function LorePage() {
     try {
       const finalTranscript = await stopRealtimeTranscription();
       stopVoiceMeter();
-      setTranscript(finalTranscript || "What do I know about N1 vibration on this engine?");
+
+      if (!finalTranscript) {
+        setTranscript("No speech detected. Try again.");
+        return;
+      }
 
       setIsLoading(true);
-      setTimeout(() => {
-        setIsLoading(false);
-        setResponse(
-          "According to SOP 72-21-00, N1 vibration above 4 units requires escalation. Marc noted in October that F-GKXA shows harmonic resonance between 2–3 units in cold conditions — below 8°C. It's a known characteristic, not a defect. He recommended logging and monitoring over the next two cycles before escalating."
-        );
-        setSources([
-          { type: "sop", label: "SOP 72-21-00" },
-          { type: "oral", label: "Marc Delaunay, Oct 2025" },
-          { type: "history", label: "F-GKXA history" },
-        ]);
-      }, 1500);
+      setResponse("");
+      setSources([]);
+
+      const res = await fetch("/api/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: finalTranscript,
+          tail: "F-GKXA",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Query failed.");
+
+      setResponse(data.response || "No answer found.");
+      if (data.sources && Array.isArray(data.sources)) {
+        setSources(data.sources);
+      }
     } catch (error) {
-      console.error("Query transcription failed:", error);
+      console.error("Query failed:", error);
       stopVoiceMeter();
-      const message = error instanceof Error ? error.message : "Transcription failed.";
-      setTranscript(`Transcription error: ${message}`);
+      const message = error instanceof Error ? error.message : "Query failed.";
+      setResponse(`Error: ${message}`);
+    } finally {
       setIsLoading(false);
     }
   }, [isRecording, stopRealtimeTranscription, stopVoiceMeter]);
