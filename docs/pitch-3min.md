@@ -6,6 +6,8 @@
 
 ## [0:00 — 0:30] The Problem
 
+(Analogy to pyramids?)
+
 Every year in France, 8,000 senior aviation technicians retire.
 
 Each one of them carries 20, 25, 30 years of knowledge that is not in any manual.
@@ -50,7 +52,7 @@ Speechmatics was the obvious choice. Real-time WebSocket connection, browser-sid
 
 Integration experience: we had real-time transcription running in the browser within two hours. The SDK is clean — open a WebSocket, send audio chunks, get results back. We added a server-side fallback for reliability: if the real-time connection drops in a noisy environment, we catch the audio locally and send it to the batch endpoint. Belt and suspenders.
 
-What surprised us: the accuracy on technical vocabulary. "CFM56-5B", "N1 shaft", "harmonic resonance" — it got them right out of the box. We expected to fight with jargon. We didn't.
+What surprised us: the accuracy on technical vocabulary. "CFM56-5B", "N1 shaft", "harmonic resonance" — it got them right out of the box, especially when using the custom dictionary feature.
 
 The real-time aspect is what makes Lore feel like a conversation, not a search engine. Thomas speaks, he sees his words appear, Lore answers. It's a dialogue. Speechmatics makes that possible.
 
