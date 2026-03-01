@@ -2,6 +2,8 @@ import { BackboardClient } from "backboard-sdk";
 
 const apiKey = process.env.BACKBOARD_API_KEY;
 const RETRY_BASE_DELAY_MS = 350;
+const GENERATED_SOP_TAG = "[GENERATED SOP DRAFT";
+const SOP_MARKDOWN_TAG = "SOP Markdown:";
 
 export type MemoryMode = "Auto" | "ReadOnly" | "Off";
 
@@ -256,6 +258,75 @@ export async function countMessages(threadId: string): Promise<number> {
     } catch {
         return 0;
     }
+}
+
+function toMessageText(value: unknown): string {
+    if (typeof value === "string") {
+        return value.trim();
+    }
+
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => toMessageText(item))
+            .filter(Boolean)
+            .join("\n")
+            .trim();
+    }
+
+    if (typeof value === "object" && value !== null) {
+        const record = value as Record<string, unknown>;
+        const direct =
+            (typeof record.text === "string" && record.text) ||
+            (typeof record.content === "string" && record.content) ||
+            (typeof record.value === "string" && record.value) ||
+            "";
+        if (direct.trim()) return direct.trim();
+
+        const nested =
+            toMessageText(record.text) ||
+            toMessageText(record.content) ||
+            toMessageText(record.value);
+        if (nested) return nested.trim();
+    }
+
+    return "";
+}
+
+function trimForSourceDetails(text: string, maxChars = 5000): string {
+    const normalized = text.trim();
+    if (normalized.length <= maxChars) return normalized;
+    return `${normalized.slice(0, maxChars)}\n\n[truncated]`;
+}
+
+function extractSopMarkdownFromMessage(messageText: string): string {
+    const tagIndex = messageText.indexOf(SOP_MARKDOWN_TAG);
+    if (tagIndex === -1) return messageText.trim();
+    return messageText.slice(tagIndex + SOP_MARKDOWN_TAG.length).trim();
+}
+
+export async function getLatestGeneratedSopDraftSource(
+    threadId: string
+): Promise<string | null> {
+    try {
+        const thread = await backboard.getThread(threadId);
+        const messages = Array.isArray(thread.messages) ? thread.messages : [];
+
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+            const message = messages[i] as { content?: unknown } | null;
+            const messageText = toMessageText(message?.content);
+            if (!messageText || !messageText.includes(GENERATED_SOP_TAG)) {
+                continue;
+            }
+
+            const markdown = extractSopMarkdownFromMessage(messageText);
+            if (!markdown) continue;
+            return trimForSourceDetails(markdown);
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
 }
 
 export async function createThread(assistantId: string): Promise<string> {

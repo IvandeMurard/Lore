@@ -111,6 +111,7 @@ export default function LorePage() {
   const [sources, setSources] = useState<LoreSource[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("Thinking…");
   const [voiceLevel, setVoiceLevel] = useState(0);
 
   const meterAnimationRef = useRef<number | null>(null);
@@ -792,6 +793,7 @@ export default function LorePage() {
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
     setIsRecording(true);
+    setLoadingMessage("Thinking…");
     setTranscript("");
     setResponse("");
     setSources([]);
@@ -830,6 +832,7 @@ export default function LorePage() {
       }
 
       setIsLoading(true);
+      setLoadingMessage("Captured information. Drafting SOP...");
       setResponse("");
       setSources([]);
 
@@ -843,12 +846,41 @@ export default function LorePage() {
         }),
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as {
+        error?: string;
+        confirmation?: string;
+        sop_generated?: boolean;
+        sop_draft_markdown?: string;
+        sop_generation_warning?: string | null;
+      };
       if (!res.ok) throw new Error(data.error || "Capture failed.");
 
       const confirmation = data.confirmation || "Knowledge captured.";
-      setResponse(confirmation);
-      setSources([{ type: "oral", label: "Captured just now" }]);
+      const sopMarkdown = (data.sop_draft_markdown || "").trim();
+      setResponse(sopMarkdown || confirmation);
+
+      const captureSources: LoreSource[] = [
+        {
+          type: "oral",
+          label: "Captured just now",
+          details: `Captured transcript:\n${finalTranscript}`,
+        },
+      ];
+      if (data.sop_generated) {
+        captureSources.push({
+          type: "sop",
+          label: "SOP draft generated",
+          details: sopMarkdown || "SOP draft generated successfully.",
+        });
+      } else if (data.sop_generation_warning) {
+        captureSources.push({
+          type: "system",
+          label: "SOP draft fallback",
+          details: data.sop_generation_warning,
+        });
+      }
+      setSources(captureSources);
+
       void playTtsResponse(confirmation).catch((error) => {
         console.error("TTS failed for capture:", error);
       });
@@ -859,6 +891,7 @@ export default function LorePage() {
       setResponse(`Error: ${message}`);
     } finally {
       setIsLoading(false);
+      setLoadingMessage("Thinking…");
     }
   }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
 
@@ -868,6 +901,7 @@ export default function LorePage() {
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
     setIsRecording(true);
+    setLoadingMessage("Thinking…");
     setTranscript("");
     setResponse("");
     setSources([]);
@@ -946,6 +980,7 @@ export default function LorePage() {
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
     setIsRecording(true);
+    setLoadingMessage("Thinking…");
     setTranscript("");
     setResponse("");
     setSources([]);
@@ -1010,6 +1045,7 @@ export default function LorePage() {
         {
           type: "history",
           label: count === null ? `${tail} history` : `${tail} history (${count})`,
+          details: `Logged transcript:\n${finalTranscript}`,
         },
       ]);
       void playTtsResponse(confirmation).catch((error) => {
@@ -1032,6 +1068,7 @@ export default function LorePage() {
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
     setIsRecording(true);
+    setLoadingMessage("Thinking…");
     setTranscript("");
     setResponse("");
     setSources([]);
@@ -1095,7 +1132,11 @@ export default function LorePage() {
         ? `Detected: ${data.intent}${data.confidence ? ` (${Math.round(data.confidence * 100)}%)` : ""}`
         : "auto";
       const autoSources: LoreSource[] = [
-        { type: "intent", label: intentLabel },
+        {
+          type: "intent",
+          label: intentLabel,
+          details: `Detected intent from transcript:\n${finalTranscript}`,
+        },
         ...(data.sources && Array.isArray(data.sources) ? data.sources : []),
       ];
       if (data.intervention_count !== undefined) {
@@ -1184,6 +1225,7 @@ export default function LorePage() {
           response={response}
           sources={sources}
           isLoading={isLoading}
+          loadingMessage={loadingMessage}
         />
       </div>
     </main>

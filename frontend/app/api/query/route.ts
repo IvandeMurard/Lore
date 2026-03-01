@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+    getLatestGeneratedSopDraftSource,
     getBackboardErrorMessage,
     isBackboardTransientError,
     resolveThreadId,
@@ -54,12 +55,38 @@ export async function POST(req: NextRequest) {
 
         const { response, message_id } = await sendQueryMessage(threadId, question);
         const safeResponse = ensureAmmDisclaimer(response);
+        const latestGeneratedSopDraft = await getLatestGeneratedSopDraftSource(threadId);
 
         // Build sources list
-        const sources: Array<{ type: string; label: string }> = [];
-        if (tail) sources.push({ type: "history", label: `${tail} memory` });
-        sources.push({ type: "sop", label: "SOP documents (RAG)" });
-        sources.push({ type: "oral", label: "Senior oral knowledge" });
+        const sources: Array<{ type: string; label: string; details?: string }> = [];
+        if (tail) {
+            sources.push({
+                type: "history",
+                label: `${tail} memory`,
+                details:
+                    `Retrieved from the ${tail} aircraft thread in Backboard. ` +
+                    "Includes prior interventions, observations, and maintenance context.",
+            });
+        }
+        sources.push({
+            type: "sop",
+            label: "SOP documents (RAG)",
+            details:
+                "Retrieved from SOP documents uploaded to Backboard and indexed for retrieval.",
+        });
+        sources.push({
+            type: "sop",
+            label: "Generated SOP drafts (from captures)",
+            details:
+                latestGeneratedSopDraft ||
+                "No generated SOP draft found yet for this aircraft. Capture one first via /api/capture.",
+        });
+        sources.push({
+            type: "oral",
+            label: "Senior oral knowledge",
+            details:
+                "Retrieved from captured senior technician debrief notes stored in Backboard memory.",
+        });
 
         return NextResponse.json({
             response: safeResponse,

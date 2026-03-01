@@ -3,6 +3,7 @@ import { classifyIntent } from "@/lib/llm";
 import { chatCompletion } from "@/lib/openai";
 import {
     countMessages,
+    getLatestGeneratedSopDraftSource,
     getBackboardErrorMessage,
     isBackboardTransientError,
     persistMessages,
@@ -21,6 +22,7 @@ type Intent = "capture" | "query" | "log";
 type OrchestrateSource = {
     type: "sop" | "oral" | "history" | "intent" | "system";
     label: string;
+    details?: string;
 };
 
 type OrchestrateResult = {
@@ -226,7 +228,13 @@ Knowledge: ${extracted.knowledge || transcript}`;
 
     return {
         response: confirmation,
-        sources: [{ type: "oral", label: "Captured just now" }],
+        sources: [
+            {
+                type: "oral",
+                label: "Captured just now",
+                details: memoryMessage,
+            },
+        ],
         validated: false,
         validation_note:
             "Pending review by certified technical authority before activation in production.",
@@ -280,11 +288,37 @@ async function handleQuery(
         }
         throw error;
     }
+    const latestGeneratedSopDraft = await getLatestGeneratedSopDraftSource(threadId);
 
     const sources: OrchestrateSource[] = [];
-    if (tail) sources.push({ type: "history", label: `${tail} memory` });
-    sources.push({ type: "sop", label: "SOP documents (RAG)" });
-    sources.push({ type: "oral", label: "Senior oral knowledge" });
+    if (tail) {
+        sources.push({
+            type: "history",
+            label: `${tail} memory`,
+            details:
+                `Retrieved from the ${tail} aircraft thread in Backboard. ` +
+                "Includes prior interventions, observations, and maintenance context.",
+        });
+    }
+    sources.push({
+        type: "sop",
+        label: "SOP documents (RAG)",
+        details:
+            "Retrieved from SOP documents uploaded to Backboard and indexed for retrieval.",
+    });
+    sources.push({
+        type: "sop",
+        label: "Generated SOP drafts (from captures)",
+        details:
+            latestGeneratedSopDraft ||
+            "No generated SOP draft found yet for this aircraft. Capture one first via /api/capture.",
+    });
+    sources.push({
+        type: "oral",
+        label: "Senior oral knowledge",
+        details:
+            "Retrieved from captured senior technician debrief notes stored in Backboard memory.",
+    });
 
     return {
         response: ensureAmmDisclaimer(response),
@@ -362,6 +396,7 @@ Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
             {
                 type: "history",
                 label: `${tail || "Aircraft"} history`,
+                details: logMessage,
             },
         ],
     };
