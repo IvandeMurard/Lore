@@ -173,6 +173,17 @@ function countWords(text: string): number {
   return trimmed.split(/\s+/).filter(Boolean).length;
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return (
+    target.isContentEditable ||
+    tag === "input" ||
+    tag === "textarea" ||
+    tag === "select"
+  );
+}
+
 function getRealtimeWsCandidates(jwt: string, language: string): string[] {
   const encodedJwt = encodeURIComponent(jwt);
   const endpointOverride = (process.env.NEXT_PUBLIC_SPEECHMATICS_RT_WS_ENDPOINT ?? "").trim();
@@ -1927,6 +1938,32 @@ export default function LorePage() {
           ? handleEndQuery
           : handleEndLog;
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isSpace = event.code === "Space" || event.key === " ";
+      if (!isSpace) return;
+      if (event.repeat) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+
+      event.preventDefault();
+
+      if (isEnrollingTeacher) return;
+      if (isRecording) {
+        onEnd();
+        return;
+      }
+      if (!isLoading) {
+        onStart();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isEnrollingTeacher, isLoading, isRecording, onEnd, onStart]);
+
   return (
     <main className="min-h-screen flex flex-col bg-background text-foreground">
       <header className="border-b border-border px-4 py-3 flex items-center justify-between">
@@ -2019,7 +2056,7 @@ export default function LorePage() {
             disabled={isLoading || isEnrollingTeacher}
           />
           <p className="text-xs text-muted-foreground text-center">
-            Hold to speak · Release to send
+            Hold to speak · Release to send · Press Space to toggle
           </p>
         </div>
 
