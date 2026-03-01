@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lore — Pitch Deck</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: rgba(255,255,255,0.06);
+    --text: #e8e8ed;
+    --muted: #8b8b9e;
+    --accent: #6c5ce7;
+    --accent-glow: rgba(108,92,231,0.25);
+    --orange: #f39c12;
+    --orange-glow: rgba(243,156,18,0.2);
+    --green: #00d2a0;
+    --green-glow: rgba(0,210,160,0.15);
+    --red: #ff6b6b;
+  }
+
+  html, body {
+    height: 100%; width: 100%;
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  /* ── Slide Container ── */
+  .deck {
+    width: 100%; height: 100%;
+    position: relative;
+  }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    padding: 60px 80px;
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    pointer-events: none;
+  }
+
+  .slide.active {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+
+  /* ── Slide 1: The Problem ── */
+  .slide-1 .hero-label {
+    font-size: 13px; font-weight: 600;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: var(--red);
+    margin-bottom: 24px;
+  }
+
+  .slide-1 h1 {
+    font-size: clamp(36px, 5vw, 64px);
+    font-weight: 800;
+    line-height: 1.1;
+    text-align: center;
+    max-width: 900px;
+    margin-bottom: 40px;
+  }
+
+  .slide-1 h1 span {
+    background: linear-gradient(135deg, #ff6b6b, #f39c12);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .stat-row {
+    display: flex; gap: 48px;
+    margin-top: 20px;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-number {
+    font-size: clamp(40px, 5vw, 72px);
+    font-weight: 900;
+    line-height: 1;
+    background: linear-gradient(135deg, var(--orange), var(--red));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .stat-label {
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: 8px;
+    max-width: 180px;
+    line-height: 1.4;
+  }
+
+  .problem-quote {
+    margin-top: 48px;
+    padding: 24px 36px;
+    border-left: 3px solid var(--orange);
+    background: var(--orange-glow);
+    border-radius: 0 12px 12px 0;
+    max-width: 700px;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  /* ── Slide 2: The Solution ── */
+  .slide-2 .hero-label {
+    font-size: 13px; font-weight: 600;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 24px;
+  }
+
+  .slide-2 h1 {
+    font-size: clamp(36px, 5vw, 60px);
+    font-weight: 800;
+    line-height: 1.1;
+    text-align: center;
+    max-width: 800px;
+    margin-bottom: 16px;
+  }
+
+  .slide-2 h1 span {
+    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .slide-2 .subtitle {
+    font-size: 18px;
+    color: var(--muted);
+    margin-bottom: 48px;
+    text-align: center;
+  }
+
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .flow-step {
+    display: flex; flex-direction: column;
+    align-items: center;
+    padding: 28px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: 200px;
+    text-align: center;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+
+  .flow-step:hover {
+    border-color: rgba(108,92,231,0.3);
+    box-shadow: 0 0 30px var(--accent-glow);
+  }
+
+  .flow-icon {
+    font-size: 36px;
+    margin-bottom: 12px;
+  }
+
+  .flow-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .flow-desc {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  .flow-arrow {
+    font-size: 28px;
+    color: var(--accent);
+    opacity: 0.5;
+  }
+
+  .tech-strip {
+    margin-top: 40px;
+    display: flex; gap: 16px; flex-wrap: wrap; justify-content: center;
+  }
+
+  .tech-tag {
+    padding: 6px 16px;
+    border-radius: 100px;
+    font-size: 12px; font-weight: 500;
+    background: rgba(108,92,231,0.1);
+    border: 1px solid rgba(108,92,231,0.2);
+    color: #a29bfe;
+  }
+
+  /* ── Slide 3: The Value ── */
+  .slide-3 .hero-label {
+    font-size: 13px; font-weight: 600;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 24px;
+  }
+
+  .slide-3 h1 {
+    font-size: clamp(36px, 5vw, 60px);
+    font-weight: 800;
+    line-height: 1.1;
+    text-align: center;
+    max-width: 850px;
+    margin-bottom: 48px;
+  }
+
+  .slide-3 h1 span {
+    background: linear-gradient(135deg, #00d2a0, #6c5ce7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .value-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    max-width: 960px;
+  }
+
+  .value-card {
+    padding: 32px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    text-align: center;
+    transition: border-color 0.3s, box-shadow 0.3s, transform 0.3s;
+  }
+
+  .value-card:hover {
+    border-color: rgba(0,210,160,0.3);
+    box-shadow: 0 0 30px var(--green-glow);
+    transform: translateY(-4px);
+  }
+
+  .value-icon {
+    font-size: 40px;
+    margin-bottom: 16px;
+  }
+
+  .value-title {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .value-desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .cta {
+    margin-top: 48px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+  }
+
+  .cta-text {
+    font-size: 22px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #00d2a0, #6c5ce7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .cta-sub {
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  /* ── Navigation ── */
+  .nav {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    z-index: 100;
+  }
+
+  .nav-dots {
+    display: flex; gap: 8px;
+  }
+
+  .nav-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    cursor: pointer;
+    transition: background 0.3s, transform 0.3s;
+    border: none;
+  }
+
+  .nav-dot.active {
+    background: var(--accent);
+    transform: scale(1.3);
+  }
+
+  .nav-btn {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.3s, background 0.3s;
+  }
+
+  .nav-btn:hover {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .slide-counter {
+    position: fixed;
+    top: 28px; right: 36px;
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 500;
+    z-index: 100;
+  }
+
+  .logo {
+    position: fixed;
+    top: 28px; left: 36px;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    z-index: 100;
+    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* ── Ambient glow ── */
+  .glow {
+    position: fixed;
+    width: 500px; height: 500px;
+    border-radius: 50%;
+    filter: blur(150px);
+    opacity: 0.12;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .glow-1 { background: var(--accent); top: -200px; right: -100px; }
+  .glow-2 { background: var(--orange); bottom: -200px; left: -100px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .slide { padding: 40px 28px; }
+    .stat-row { flex-direction: column; gap: 24px; }
+    .flow { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); }
+    .value-grid { grid-template-columns: 1fr; max-width: 340px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+
+<div class="logo">Lore</div>
+<div class="slide-counter"><span id="counter">1</span> / 3</div>
+
+<!-- ─────────────────────────────────────── -->
+<!-- SLIDE 1 — THE PROBLEM                  -->
+<!-- ─────────────────────────────────────── -->
+<div class="deck">
+  <div class="slide slide-1 active" data-index="0">
+    <div class="hero-label">The Problem</div>
+    <h1>When experts retire, <span>knowledge walks out the door</span></h1>
+
+    <div class="stat-row">
+      <div class="stat">
+        <div class="stat-number">42%</div>
+        <div class="stat-label">of skilled MRO technicians retiring by 2030</div>
+      </div>
+      <div class="stat">
+        <div class="stat-number">70%</div>
+        <div class="stat-label">of critical know-how is tacit &mdash; undocumented</div>
+      </div>
+      <div class="stat">
+        <div class="stat-number">$1.2M</div>
+        <div class="stat-label">average cost per unplanned AOG event</div>
+      </div>
+    </div>
+
+    <div class="problem-quote">
+      "Marc knows that a high-cycle CFM56 fan blade feels different at cold-start &mdash;
+      but that tip lives in his hands, not in any manual."
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────── -->
+  <!-- SLIDE 2 — WHAT IT DOES                 -->
+  <!-- ─────────────────────────────────────── -->
+  <div class="slide slide-2" data-index="1">
+    <div class="hero-label">The Solution</div>
+    <h1>A voice AI that <span>captures, stores &amp; delivers</span> expertise</h1>
+    <div class="subtitle">Hands-free. On the shop floor. No screen needed.</div>
+
+    <div class="flow">
+      <div class="flow-step">
+        <div class="flow-icon">&#127908;</div>
+        <div class="flow-title">Capture</div>
+        <div class="flow-desc">Senior speaks freely. Lore extracts structured knowledge via Socratic elicitation.</div>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">
+        <div class="flow-icon">&#129504;</div>
+        <div class="flow-title">Store &amp; Index</div>
+        <div class="flow-desc">Knowledge is attributed, tagged to aircraft &amp; component, and indexed alongside SOPs.</div>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">
+        <div class="flow-icon">&#128483;</div>
+        <div class="flow-title">Query</div>
+        <div class="flow-desc">Junior asks by voice. Lore answers: SOP first, then senior tips, then aircraft history.</div>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">
+        <div class="flow-icon">&#128203;</div>
+        <div class="flow-title">Log</div>
+        <div class="flow-desc">Technician logs actions by voice. Lore structures &amp; stores the intervention record.</div>
+      </div>
+    </div>
+
+    <div class="tech-strip">
+      <div class="tech-tag">Speechmatics STT</div>
+      <div class="tech-tag">GPT-4o</div>
+      <div class="tech-tag">Backboard RAG</div>
+      <div class="tech-tag">OpenAI TTS</div>
+      <div class="tech-tag">Next.js</div>
+      <div class="tech-tag">Vercel</div>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────── -->
+  <!-- SLIDE 3 — THE VALUE                    -->
+  <!-- ─────────────────────────────────────── -->
+  <div class="slide slide-3" data-index="2">
+    <div class="hero-label">What We Get</div>
+    <h1>From tribal knowledge to <span>institutional memory</span></h1>
+
+    <div class="value-grid">
+      <div class="value-card">
+        <div class="value-icon">&#128274;</div>
+        <div class="value-title">Zero Knowledge Loss</div>
+        <div class="value-desc">Decades of expertise captured before retirement, preserved for every future technician.</div>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">&#9889;</div>
+        <div class="value-title">Faster Ramp-Up</div>
+        <div class="value-desc">Juniors get senior-level context on demand &mdash; no waiting, no searching through binders.</div>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">&#128737;</div>
+        <div class="value-title">Safety First</div>
+        <div class="value-desc">SOP always takes priority. Lore never contradicts the book &mdash; it augments it with real-world context.</div>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">&#9997;</div>
+        <div class="value-title">Auto-Generated SOPs</div>
+        <div class="value-desc">Oral tips become structured, editable SOP drafts &mdash; bridging the gap between practice and documentation.</div>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">&#128218;</div>
+        <div class="value-title">Full Traceability</div>
+        <div class="value-desc">Every piece of knowledge is attributed: who said it, when, on which aircraft, under what conditions.</div>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">&#127911;</div>
+        <div class="value-title">Hands-Free UX</div>
+        <div class="value-desc">Voice-in, voice-out. Built for grease-covered hands and noisy hangars &mdash; no screen required.</div>
+      </div>
+    </div>
+
+    <div class="cta">
+      <div class="cta-text">Lore &mdash; The memory your workshop deserves.</div>
+      <div class="cta-sub">Activate Your Voice &middot; Speechmatics x AI Collective Paris</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Nav ── -->
+<div class="nav">
+  <button class="nav-btn" id="prev">&larr;</button>
+  <div class="nav-dots">
+    <button class="nav-dot active" data-slide="0"></button>
+    <button class="nav-dot" data-slide="1"></button>
+    <button class="nav-dot" data-slide="2"></button>
+  </div>
+  <button class="nav-btn" id="next">&rarr;</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const dots   = document.querySelectorAll('.nav-dot');
+  const counter = document.getElementById('counter');
+  let current = 0;
+
+  function go(i) {
+    if (i < 0 || i >= slides.length) return;
+    slides[current].classList.remove('active');
+    dots[current].classList.remove('active');
+    current = i;
+    slides[current].classList.add('active');
+    dots[current].classList.add('active');
+    counter.textContent = current + 1;
+  }
+
+  document.getElementById('prev').addEventListener('click', () => go(current - 1));
+  document.getElementById('next').addEventListener('click', () => go(current + 1));
+  dots.forEach(d => d.addEventListener('click', () => go(+d.dataset.slide)));
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); go(current + 1); }
+    if (e.key === 'ArrowLeft')  go(current - 1);
+  });
+</script>
+</body>
+</html>
