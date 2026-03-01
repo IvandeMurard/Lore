@@ -21,22 +21,33 @@ export function HoldToSpeakButton({
   className,
 }: HoldToSpeakButtonProps) {
   const buttonRef = React.useRef<HTMLButtonElement>(null);
+  const activePointerIdRef = React.useRef<number | null>(null);
+  const isPressingRef = React.useRef(false);
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (disabled) return;
+    if (disabled || isPressingRef.current) return;
     e.preventDefault();
-    onStart();
+    isPressingRef.current = true;
+    activePointerIdRef.current = e.pointerId;
     buttonRef.current?.setPointerCapture(e.pointerId);
+    onStart();
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
+  const endPress = (e: React.PointerEvent) => {
+    const activePointerId = activePointerIdRef.current;
+    if (!isPressingRef.current || activePointerId === null) return;
+    if (activePointerId !== e.pointerId) return;
+
     e.preventDefault();
+    isPressingRef.current = false;
+    activePointerIdRef.current = null;
     onEnd();
-    buttonRef.current?.releasePointerCapture(e.pointerId);
-  };
 
-  const handlePointerLeave = (e: React.PointerEvent) => {
-    if (e.buttons === 1) onEnd();
+    try {
+      buttonRef.current?.releasePointerCapture(e.pointerId);
+    } catch {
+      // Ignore if capture was already released.
+    }
   };
 
   return (
@@ -51,9 +62,8 @@ export function HoldToSpeakButton({
         className
       )}
       onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerLeave}
-      onPointerCancel={handlePointerUp}
+      onPointerUp={endPress}
+      onPointerCancel={endPress}
     >
       {isRecording ? (
         <MicOff className="h-8 w-8" />

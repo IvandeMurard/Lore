@@ -24,6 +24,14 @@ interface SpeechmaticsRealtimeMessage {
   reason?: string;
 }
 
+interface ResolvedTranscript {
+  transcript: string;
+  fallbackError?: string;
+}
+
+const RT_MAX_DELAY_SEC = 3;
+const RT_STOP_WAIT_PADDING_MS = 1200;
+
 function parseServerTiming(header: string | null): Record<string, number> {
   if (!header) return {};
   const output: Record<string, number> = {};
@@ -369,6 +377,11 @@ export default function LorePage() {
           resolve();
         };
         recorder.addEventListener("stop", cleanup);
+        try {
+          recorder.requestData();
+        } catch {
+          // Some browsers may reject requestData while stopping; ignore and continue.
+        }
         recorder.stop();
       });
     }
@@ -408,7 +421,17 @@ export default function LorePage() {
       throw new Error(message);
     }
 
-    const payload = (await response.json()) as { transcript?: string };
+    const payload = (await response.json()) as {
+      transcript?: string;
+      provider?: string;
+      degraded?: boolean;
+    };
+    if (payload.provider) {
+      console.log("[stt] fallback-transcribe", {
+        provider: payload.provider,
+        degraded: Boolean(payload.degraded),
+      });
+    }
     return (payload.transcript ?? "").trim();
   }, []);
 
@@ -462,7 +485,7 @@ export default function LorePage() {
                   transcription_config: {
                     language,
                     enable_partials: true,
-                    max_delay: 3,
+                    max_delay: RT_MAX_DELAY_SEC,
                     operating_point: "enhanced",
                     enable_entities: true,
                     punctuation_overrides: {
@@ -662,7 +685,10 @@ export default function LorePage() {
     if (socket) {
       const waitForEnd = new Promise<void>((resolve) => {
         endOfTranscriptResolverRef.current = resolve;
-        window.setTimeout(resolve, 1200);
+        window.setTimeout(
+          resolve,
+          Math.max(1200, RT_MAX_DELAY_SEC * 1000 + RT_STOP_WAIT_PADDING_MS)
+        );
       });
 
       if (socket.readyState === WebSocket.OPEN) {
@@ -693,17 +719,24 @@ export default function LorePage() {
     return finalTranscript;
   }, []);
 
-  const resolveFinalTranscript = useCallback(async (): Promise<string> => {
+  const resolveFinalTranscript = useCallback(async (): Promise<ResolvedTranscript> => {
     const realtimeTranscript = (await stopRealtimeTranscription()).trim();
     const backupAudio = await stopBackupRecorder();
 
     if (realtimeTranscript) {
       realtimeAvailableRef.current = true;
-      return realtimeTranscript;
+      return { transcript: realtimeTranscript };
     }
 
     if (!backupAudio) {
-      return "";
+      if (!realtimeAvailableRef.current) {
+        return {
+          transcript: "",
+          fallbackError:
+            "Fallback STT failed: backup audio was not captured. Check mic permissions and browser recording support.",
+        };
+      }
+      return { transcript: "" };
     }
 
     try {
@@ -711,10 +744,12 @@ export default function LorePage() {
       if (fallbackTranscript) {
         setTranscript(fallbackTranscript);
       }
-      return fallbackTranscript;
+      return { transcript: fallbackTranscript };
     } catch (error) {
-      console.error("Fallback transcription failed:", error);
-      return "";
+      const message = error instanceof Error ? error.message : "Unknown fallback transcription error.";
+      const fallbackError = `Fallback STT failed: ${message}`;
+      console.error(fallbackError, error);
+      return { transcript: "", fallbackError };
     }
   }, [stopBackupRecorder, stopRealtimeTranscription, transcribeFallbackAudio]);
 
@@ -726,8 +761,8 @@ export default function LorePage() {
       startBackupRecorder(stream);
 
       if (!shouldRecordRef.current) {
-        await stopBackupRecorder();
-        stopVoiceMeter();
+        // Release may have happened while setup was in progress.
+        // Let the end handler perform teardown exactly once.
         return;
       }
 
@@ -742,20 +777,12 @@ export default function LorePage() {
         );
         setTranscript("Realtime STT unavailable. Release to transcribe from recorded audio.");
       }
-
-      if (!shouldRecordRef.current) {
-        await stopRealtimeTranscription();
-        await stopBackupRecorder();
-        stopVoiceMeter();
-      }
+      // Cleanup is handled by the release/end handlers.
     },
     [
       startBackupRecorder,
       startRealtimeTranscription,
       startVoiceMeter,
-      stopBackupRecorder,
-      stopRealtimeTranscription,
-      stopVoiceMeter,
     ]
   );
 
@@ -763,6 +790,7 @@ export default function LorePage() {
     if (isRecording || isLoading) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
+    realtimeAvailableRef.current = false;
     setIsRecording(true);
     setTranscript("");
     setResponse("");
@@ -794,10 +822,10 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await resolveFinalTranscript();
+      const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
       stopVoiceMeter();
       if (!finalTranscript) {
-        setTranscript("No speech detected. Try again.");
+        setTranscript(fallbackError ?? "No speech detected. Try again.");
         return;
       }
 
@@ -838,6 +866,7 @@ export default function LorePage() {
     if (isRecording || isLoading) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
+    realtimeAvailableRef.current = false;
     setIsRecording(true);
     setTranscript("");
     setResponse("");
@@ -869,11 +898,11 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await resolveFinalTranscript();
+      const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
       stopVoiceMeter();
 
       if (!finalTranscript) {
-        setTranscript("No speech detected. Try again.");
+        setTranscript(fallbackError ?? "No speech detected. Try again.");
         return;
       }
 
@@ -915,6 +944,7 @@ export default function LorePage() {
     if (isRecording || isLoading) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
+    realtimeAvailableRef.current = false;
     setIsRecording(true);
     setTranscript("");
     setResponse("");
@@ -946,11 +976,11 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await resolveFinalTranscript();
+      const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
       stopVoiceMeter();
 
       if (!finalTranscript) {
-        setTranscript("No speech detected. Try again.");
+        setTranscript(fallbackError ?? "No speech detected. Try again.");
         return;
       }
 
@@ -1000,6 +1030,7 @@ export default function LorePage() {
     if (isRecording || isLoading) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
+    realtimeAvailableRef.current = false;
     setIsRecording(true);
     setTranscript("");
     setResponse("");
@@ -1031,11 +1062,11 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await resolveFinalTranscript();
+      const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
       stopVoiceMeter();
 
       if (!finalTranscript) {
-        setTranscript("No speech detected. Try again.");
+        setTranscript(fallbackError ?? "No speech detected. Try again.");
         return;
       }
 
