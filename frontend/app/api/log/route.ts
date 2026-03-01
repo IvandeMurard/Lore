@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { embed } from "@/lib/openai";
-import { upsertPoint, countPoints, COLLECTIONS } from "@/lib/qdrant";
-import { extractLogEntry } from "@/lib/llm";
+import { chatCompletion } from "@/lib/openai";
+import { sendMessage, countMessages, resolveThreadId } from "@/lib/backboard";
+import { LOG_PROMPT } from "@/lib/prompts";
 
 /**
  * POST /api/log
  *
- * Logs an intervention to the aircraft history.
+ * Logs a technician intervention to the aircraft Backboard thread.
+ * memory=Auto → stored as part of the aircraft's persistent memory.
  *
  * Body: { transcript, tail, technician }
  * Returns: { confirmation, intervention_count }
@@ -24,9 +25,21 @@ export async function POST(req: NextRequest) {
         }
 
         // 1. LLM extracts structured log entry
+        const logContext = `Technician: ${technician || "Unknown"}
+Aircraft: ${tail || "Unknown"}
+
+Transcript:
+"${transcript}"`;
+
+        const extractedRaw = await chatCompletion(
+            LOG_PROMPT,
+            logContext,
+            { temperature: 0.1 }
+        );
+
         let extracted;
         try {
-            extracted = await extractLogEntry(transcript);
+            extracted = JSON.parse(extractedRaw);
         } catch {
             extracted = {
                 description: transcript,
@@ -37,32 +50,25 @@ export async function POST(req: NextRequest) {
             };
         }
 
-        // 2. Embed and upsert into aircraft_history
-        const logText = `${extracted.description || transcript} | Findings: ${extracted.findings || ""} | Action: ${extracted.action_taken || "Logged"}`;
-        const vector = await embed(logText);
+        // 2. Build structured log message for Backboard memory
+        const logMessage = `[INTERVENTION LOG — ${new Date().toISOString().split("T")[0]}]
+Technician: ${technician || "Unknown"}
+Aircraft: ${tail || "Unknown"}
+Component: ${extracted.component || "Unknown"}
+Observation: ${extracted.findings || extracted.description || transcript}
+Action taken: ${extracted.action_taken || "None"}
+Status: ${extracted.status || "monitoring"}
+Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
-        const id = crypto.randomUUID();
-        await upsertPoint(COLLECTIONS.AIRCRAFT_HISTORY, id, vector, {
-            description: extracted.description || transcript,
-            component: extracted.component || "Unknown",
-            findings: extracted.findings || transcript,
-            action_taken: extracted.action_taken || "Logged",
-            status: extracted.status || "monitoring",
-            technician: technician || "Unknown",
-            aircraft: tail || "Unknown",
-            date: new Date().toISOString().split("T")[0],
-            timestamp: new Date().toISOString(),
-            raw_transcript: transcript,
-        });
-
-        // 3. Count interventions for this aircraft
+        // 3. Store in aircraft thread (memory=Auto)
         let interventionCount = 0;
+
         try {
-            interventionCount = await countPoints(COLLECTIONS.AIRCRAFT_HISTORY, tail ? {
-                must: [{ key: "aircraft", match: { value: tail } }],
-            } : undefined);
-        } catch {
-            interventionCount = 0;
+            const threadId = resolveThreadId(tail || "default");
+            await sendMessage(threadId, logMessage, "Auto");
+            interventionCount = await countMessages(threadId);
+        } catch (err) {
+            console.warn(`[log] Could not resolve thread for ${tail}:`, err);
         }
 
         return NextResponse.json({

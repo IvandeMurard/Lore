@@ -10,27 +10,33 @@ Voice AI mentor for industrial knowledge transfer. Captures tacit expertise from
 
 ## Stack
 
-- **Frontend:** Next.js 14 App Router, TypeScript, Tailwind CSS
-- **Voice In:** Speechmatics real-time STT API
-- **LLM:** OpenAI GPT-4o (or Claude Sonnet)
-- **Memory:** Qdrant vector DB (episodic + semantic)
-- **RAG:** LangChain on mock SOP documents
-- **Voice Out:** ElevenLabs TTS (or OpenAI TTS)
+- **Frontend:** Next.js 14 App Router, TypeScript, Tailwind CSS (lives in `frontend/`)
+- **Voice In:** Speechmatics real-time STT (browser-side WebSocket)
+- **LLM:** OpenAI GPT-4o
+- **Memory:** Backboard — thread-per-aircraft + thread-per-technician, `memory="Auto"`
+- **RAG:** Backboard auto-indexed SOP documents (uploaded via dashboard)
+- **Voice Out:** OpenAI TTS (`gpt-4o-mini-tts`, fallback `tts-1`)
 - **Deploy:** Vercel
 
 ## Architecture
 
-Three API routes drive the core loop:
+Three API routes in `frontend/app/api/` drive the core loop:
 
-1. `POST /api/capture` — Senior debriefs → LLM extracts structured knowledge → stores in Qdrant
-2. `POST /api/query` — Junior asks → RAG on SOPs + Qdrant semantic search → LLM synthesizes → TTS
-3. `POST /api/log` — Junior logs intervention → stores in aircraft history collection
+1. `POST /api/capture` — Senior debriefs → LLM extracts structured knowledge → stores in Backboard (aircraft + technician threads)
+2. `POST /api/query` — Junior asks → Backboard RAG (SOP + oral + history) → response + TTS
+3. `POST /api/log` — Junior logs intervention → LLM extracts → stores in Backboard aircraft thread
+
+Supporting routes:
+- `POST /api/tts` — OpenAI TTS synthesis
+- `POST /api/speechmatics-token` — JWT for browser-side STT
+- `POST /api/transcribe` — Server-side STT fallback
 
 ## Key Design Rules
 
-- **Lore never contradicts a SOP.** RAG on official docs always takes precedence.
-- Knowledge is attributed to the source technician (name, date, conditions).
-- Aircraft history is linked by tail number (e.g., `F-GKXA`).
+- **Lore never contradicts a SOP.** SOP always takes precedence (Priority 1 in synthesis prompt).
+- Knowledge is attributed to the source technician by full name, date, and conditions.
+- Aircraft history is linked by tail number (e.g., `F-GKXA`) via Backboard thread mapping.
+- Every response ends with: "Vérifie toujours la procédure AMM avant d'intervenir."
 - Demo uses mock data only — no real EASA-regulated documents.
 
 ## Demo Persona
@@ -38,16 +44,16 @@ Three API routes drive the core loop:
 - **Thomas** — Junior technician, 2 years experience, on Airbus A320 F-GKXA
 - **Marc** — Retired senior, 26 years on CFM56, pre-captured in the system
 
-## Scope for Hackathon (24h)
+## Key Files
 
-Build ONLY what makes the 3-minute demo work:
-1. Browser audio capture → Speechmatics STT
-2. Query endpoint with RAG + Qdrant
-3. Capture endpoint (seed Marc's knowledge)
-4. TTS voice response
-5. Minimal waveform UI (Capture mode / Query mode toggle)
-
-Do NOT build: user auth, real SOP ingestion, multi-aircraft management, admin panel, analytics.
+| File | Purpose |
+|------|---------|
+| `frontend/app/page.tsx` | Main UI with STT + API + TTS wiring |
+| `frontend/lib/backboard.ts` | Backboard client with retry logic |
+| `frontend/lib/openai.ts` | OpenAI embed + chatCompletion |
+| `frontend/lib/llm.ts` | classifyIntent, synthesize, elicit, extractLog |
+| `frontend/lib/prompts.ts` | All system prompts |
+| `docs/trust-safety.md` | EASA/GDPR/safety framework |
 
 ## Commands
 

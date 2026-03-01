@@ -94,6 +94,7 @@ export function ParticleSphere({
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const context: CanvasRenderingContext2D = ctx;
 
     const dpr = Math.min(window.devicePixelRatio ?? 1, 2);
     const size = 280;
@@ -101,7 +102,7 @@ export function ParticleSphere({
     canvas.height = size * dpr;
     canvas.style.width = `${size}px`;
     canvas.style.height = `${size}px`;
-    ctx.scale(dpr, dpr);
+    context.scale(dpr, dpr);
 
     const centerX = size / 2;
     const centerY = size / 2;
@@ -135,7 +136,7 @@ export function ParticleSphere({
       const spinT = spinTimeRef.current;
       const waveT = waveTimeRef.current;
 
-      ctx.clearRect(0, 0, size, size);
+      context.clearRect(0, 0, size, size);
 
       shapePoints.sphere.forEach((spherePoint, i) => {
         const cubePoint = shapePoints.cube[i];
@@ -185,10 +186,10 @@ export function ParticleSphere({
         const hue = 0;
         const sat = 0;
         const light = 72 + reactiveLevel * 18;
-        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
-        ctx.beginPath();
-        ctx.arc(screenX, screenY, particleRadius, 0, Math.PI * 2);
-        ctx.fill();
+        context.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
+        context.beginPath();
+        context.arc(screenX, screenY, particleRadius, 0, Math.PI * 2);
+        context.fill();
       });
 
       animationRef.current = requestAnimationFrame(draw);

@@ -36,7 +36,7 @@ function getCandidateBaseUrls(): string[] {
     "https://au1.asr.api.speechmatics.com",
   ].filter(Boolean);
 
-  return [...new Set(candidates)];
+  return Array.from(new Set(candidates));
 }
 
 function delay(ms: number): Promise<void> {

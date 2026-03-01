@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { embed } from "@/lib/openai";
-import { searchPoints, COLLECTIONS } from "@/lib/qdrant";
-import { synthesizeResponse } from "@/lib/llm";
+import { sendMessage, resolveThreadId } from "@/lib/backboard";
+
+const QUERY_TIMEOUT_MS = 18000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+            setTimeout(() => reject(new Error("Backboard query timed out.")), timeoutMs);
+        }),
+    ]);
+}
 
 /**
  * POST /api/query
  *
  * Handles a junior technician's question.
- * Searches oral knowledge + SOP chunks + aircraft history, synthesizes a response.
+ * Queries the aircraft Backboard thread — memory=Auto retrieves:
+ *   - Senior oral knowledge (stored via /api/capture)
+ *   - Aircraft intervention history (stored via /api/log)
+ *   - SOP documents (uploaded to Backboard dashboard)
+ * Priority enforced by the Lore assistant system prompt: SOP > oral > history.
  *
  * Body: { transcript, tail }
  * Returns: { response, sources }
@@ -24,64 +37,66 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // 1. Embed the query text
-        const queryVector = await embed(transcript);
-
-        // 2. Parallel Qdrant searches: oral_knowledge + sop_chunks + aircraft_history
-        const [oralResults, sopResults, historyResults] = await Promise.all([
-            searchPoints(COLLECTIONS.ORAL_KNOWLEDGE, queryVector, 5).catch(() => []),
-            searchPoints(COLLECTIONS.SOP_CHUNKS, queryVector, 3).catch(() => []),
-            tail
-                ? searchPoints(COLLECTIONS.AIRCRAFT_HISTORY, queryVector, 3, {
-                    must: [{ key: "aircraft", match: { value: tail } }],
-                }).catch(() => [])
-                : Promise.resolve([]),
-        ]);
-
-        // 3. Format sources for the LLM synthesis function
-        const sopSources = sopResults.length > 0
-            ? sopResults.map((r: any) => `[SOP ${r.payload?.sop_id || "Unknown"}] ${r.payload?.text || r.payload?.content || ""}`)
-            : [];
-
-        const oralSources = oralResults.length > 0
-            ? oralResults.map((r: any) => `[${r.payload?.technician || "Senior"}, ${r.payload?.date || "Unknown date"}] ${r.payload?.knowledge || r.payload?.text || ""}`)
-            : [];
-
-        const historySources = historyResults.length > 0
-            ? historyResults.map((r: any) => `[${r.payload?.date || "Unknown date"}] ${r.payload?.description || r.payload?.text || ""}`)
-            : [];
-
-        // 4. Use the frontend's synthesizeResponse which enforces SOP > Oral > History priority
-        const response = await synthesizeResponse(transcript, {
-            sop: sopSources,
-            oral: oralSources,
-            history: historySources,
-        });
-
-        // 5. Build deduplicated sources list for UI
-        const sourceLabels: Array<{ type: string; label: string }> = [];
-        if (sopResults.length > 0) {
-            sopResults.forEach((r: any) => {
-                sourceLabels.push({ type: "sop", label: `SOP ${r.payload?.sop_id || "Unknown"}` });
-            });
+        // Resolve aircraft thread
+        let threadId: string;
+        try {
+            threadId = resolveThreadId(tail || "default");
+        } catch {
+            return NextResponse.json(
+                { error: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.` },
+                { status: 400 }
+            );
         }
-        if (oralResults.length > 0) {
-            oralResults.forEach((r: any) => {
-                sourceLabels.push({
-                    type: "oral",
-                    label: `${r.payload?.technician || "Senior"}, ${r.payload?.date || "Unknown date"}`,
-                });
-            });
-        }
-        if (historyResults.length > 0) {
-            sourceLabels.push({ type: "history", label: `${tail || "Aircraft"} history` });
-        }
+
+        // Query the aircraft thread — Backboard handles RAG + memory retrieval
+        const question = tail
+            ? `[Aircraft: ${tail}] ${transcript}`
+            : transcript;
+
+        const { response, message_id } = await withTimeout(
+            sendMessage(threadId, question, "ReadOnly"),
+            QUERY_TIMEOUT_MS
+        );
+
+        // Build sources list
+        const sources: Array<{ type: string; label: string }> = [];
+        if (tail) sources.push({ type: "history", label: `${tail} memory` });
+        sources.push({ type: "sop", label: "SOP documents (RAG)" });
+        sources.push({ type: "oral", label: "Senior oral knowledge" });
 
         return NextResponse.json({
             response,
-            sources: sourceLabels,
+            sources,
+            message_id,
         });
     } catch (error) {
+        const statusCode =
+            typeof error === "object" &&
+            error !== null &&
+            "statusCode" in error &&
+            typeof (error as { statusCode?: number }).statusCode === "number"
+                ? (error as { statusCode: number }).statusCode
+                : undefined;
+
+        const message =
+            error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+        const isTimeout = message.includes("timed out") || message.includes("timeout");
+
+        if (
+            isTimeout ||
+            statusCode === 429 ||
+            (typeof statusCode === "number" && statusCode >= 500)
+        ) {
+            console.warn("[/api/query] Backboard transient error:", error);
+            return NextResponse.json(
+                {
+                    error:
+                        "Knowledge service is temporarily unavailable. Please try again in a few seconds.",
+                },
+                { status: 503 }
+            );
+        }
+
         console.error("[/api/query] Error:", error);
         return NextResponse.json(
             { error: "Internal server error", details: String(error) },

@@ -23,6 +23,25 @@ interface SpeechmaticsRealtimeMessage {
   reason?: string;
 }
 
+function parseServerTiming(header: string | null): Record<string, number> {
+  if (!header) return {};
+  const output: Record<string, number> = {};
+  const metrics = header.split(",");
+
+  for (const metric of metrics) {
+    const [namePart, ...rest] = metric.trim().split(";");
+    const name = namePart.trim();
+    const durToken = rest.find((token) => token.trim().startsWith("dur="));
+    if (!name || !durToken) continue;
+    const value = Number(durToken.trim().slice(4));
+    if (Number.isFinite(value)) {
+      output[name] = value;
+    }
+  }
+
+  return output;
+}
+
 function parseRealtimeMessage(raw: string): SpeechmaticsRealtimeMessage | null {
   try {
     return JSON.parse(raw) as SpeechmaticsRealtimeMessage;
@@ -57,16 +76,49 @@ function getTranscriptFragment(data: SpeechmaticsRealtimeMessage): string {
   return resultsToText(data.results);
 }
 
+function buildSpokenTtsText(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+
+  const maxChars = 240;
+  const maxWords = 55;
+  const maxSentences = 2;
+  const sentenceMatches = normalized.match(/[^.!?]+[.!?]?/g) ?? [normalized];
+
+  let spoken = "";
+  let sentenceCount = 0;
+
+  for (const sentenceRaw of sentenceMatches) {
+    const sentence = sentenceRaw.trim();
+    if (!sentence) continue;
+
+    const candidate = spoken ? `${spoken} ${sentence}` : sentence;
+    const words = candidate.split(/\s+/).filter(Boolean).length;
+
+    if (candidate.length > maxChars || words > maxWords) {
+      break;
+    }
+
+    spoken = candidate;
+    sentenceCount += 1;
+
+    if (sentenceCount >= maxSentences) {
+      break;
+    }
+  }
+
+  if (spoken) return spoken;
+  return normalized.slice(0, maxChars);
+}
+
 function getRealtimeWsCandidates(jwt: string, language: string): string[] {
   const encodedJwt = encodeURIComponent(jwt);
   const endpointOverride = (process.env.NEXT_PUBLIC_SPEECHMATICS_RT_WS_ENDPOINT ?? "").trim();
   const hosts = [
     endpointOverride,
     "eu2.rt.speechmatics.com",
-    "eu1.rt.speechmatics.com",
     "eu.rt.speechmatics.com",
     "us2.rt.speechmatics.com",
-    "us1.rt.speechmatics.com",
     "us.rt.speechmatics.com",
   ].filter(Boolean);
 
@@ -75,11 +127,11 @@ function getRealtimeWsCandidates(jwt: string, language: string): string[] {
     urls.push(`wss://${host}/v2?jwt=${encodedJwt}`);
     urls.push(`wss://${host}/v2/${language}?jwt=${encodedJwt}`);
   }
-  return [...new Set(urls)];
+  return Array.from(new Set(urls));
 }
 
 export default function LorePage() {
-  const [mode, setMode] = useState<LoreMode>("query");
+  const [mode, setMode] = useState<LoreMode>("auto");
   const [transcript, setTranscript] = useState("");
   const [response, setResponse] = useState("");
   const [sources, setSources] = useState<LoreSource[]>([]);
@@ -103,6 +155,8 @@ export default function LorePage() {
   const realtimeFinalRef = useRef("");
   const endOfTranscriptResolverRef = useRef<(() => void) | null>(null);
   const shouldRecordRef = useRef(false);
+  const responseAudioRef = useRef<HTMLAudioElement | null>(null);
+  const responseAudioUrlRef = useRef<string | null>(null);
 
   const stopVoiceMeter = useCallback(() => {
     meterSessionRef.current += 1;
@@ -130,6 +184,108 @@ export default function LorePage() {
 
     setVoiceLevel(0);
   }, []);
+
+  const stopResponseAudio = useCallback(() => {
+    const audio = responseAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.src = "";
+      responseAudioRef.current = null;
+    }
+
+    const audioUrl = responseAudioUrlRef.current;
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      responseAudioUrlRef.current = null;
+    }
+  }, []);
+
+  const playTtsResponse = useCallback(
+    async (text: string) => {
+      const cleanText = text.trim().replace(/\s+/g, " ");
+      if (!cleanText) return;
+
+      const tStart = performance.now();
+      stopResponseAudio();
+
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: cleanText }),
+      });
+      const tAfterFetch = performance.now();
+
+      if (!response.ok) {
+        let message = `TTS failed (${response.status}).`;
+        try {
+          const payload = (await response.json()) as { error?: string };
+          if (payload.error) message = payload.error;
+        } catch {
+          const body = await response.text();
+          if (body) message = `${message} ${body}`;
+        }
+        throw new Error(message);
+      }
+
+      const audioBlob = await response.blob();
+      const tAfterBlob = performance.now();
+      if (!audioBlob.size) {
+        throw new Error("TTS returned empty audio.");
+      }
+
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
+      responseAudioRef.current = audio;
+      responseAudioUrlRef.current = audioUrl;
+
+      const serverTiming = parseServerTiming(response.headers.get("server-timing"));
+      const model = response.headers.get("x-tts-model");
+      const textLength = response.headers.get("x-tts-text-length");
+      const audioBytes = response.headers.get("x-tts-audio-bytes");
+      const timingSnapshot = {
+        model,
+        textLength: textLength ? Number(textLength) : cleanText.length,
+        audioBytes: audioBytes ? Number(audioBytes) : audioBlob.size,
+        clientFetchMs: Number((tAfterFetch - tStart).toFixed(1)),
+        clientBlobMs: Number((tAfterBlob - tAfterFetch).toFixed(1)),
+        serverTiming,
+      };
+
+      console.log("[tts] response-ready", timingSnapshot);
+
+      const clearAudioRefs = () => {
+        if (responseAudioRef.current === audio) {
+          responseAudioRef.current = null;
+        }
+        if (responseAudioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          responseAudioUrlRef.current = null;
+        }
+      };
+
+      audio.onended = clearAudioRefs;
+      audio.onerror = clearAudioRefs;
+
+      try {
+        await audio.play();
+        const tAfterPlay = performance.now();
+        console.log("[tts] playback-started", {
+          ...timingSnapshot,
+          clientPlayStartMs: Number((tAfterPlay - tAfterBlob).toFixed(1)),
+          clientTotalMs: Number((tAfterPlay - tStart).toFixed(1)),
+        });
+      } catch (error) {
+        // This is expected if user starts recording or we replace audio mid-playback.
+        if (error instanceof DOMException && error.name === "AbortError") {
+          console.log("[tts] playback-aborted");
+          return;
+        }
+        throw error;
+      }
+    },
+    [stopResponseAudio]
+  );
 
   const startVoiceMeter = useCallback(async () => {
     stopVoiceMeter();
@@ -449,6 +605,7 @@ export default function LorePage() {
 
   const handleStartCapture = useCallback(async () => {
     if (isRecording || isLoading) return;
+    stopResponseAudio();
     shouldRecordRef.current = true;
     setIsRecording(true);
     setTranscript("");
@@ -480,6 +637,7 @@ export default function LorePage() {
     isRecording,
     startRealtimeTranscription,
     startVoiceMeter,
+    stopResponseAudio,
     stopRealtimeTranscription,
     stopVoiceMeter,
   ]);
@@ -514,8 +672,12 @@ export default function LorePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Capture failed.");
 
-      setResponse(data.confirmation || "Knowledge captured.");
+      const confirmation = data.confirmation || "Knowledge captured.";
+      setResponse(confirmation);
       setSources([{ type: "oral", label: "Captured just now" }]);
+      void playTtsResponse(confirmation).catch((error) => {
+        console.error("TTS failed for capture:", error);
+      });
     } catch (error) {
       console.error("Capture failed:", error);
       stopVoiceMeter();
@@ -524,10 +686,11 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, stopRealtimeTranscription, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
 
   const handleStartQuery = useCallback(async () => {
     if (isRecording || isLoading) return;
+    stopResponseAudio();
     shouldRecordRef.current = true;
     setIsRecording(true);
     setTranscript("");
@@ -559,6 +722,7 @@ export default function LorePage() {
     isRecording,
     startRealtimeTranscription,
     startVoiceMeter,
+    stopResponseAudio,
     stopRealtimeTranscription,
     stopVoiceMeter,
   ]);
@@ -593,10 +757,14 @@ export default function LorePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Query failed.");
 
-      setResponse(data.response || "No answer found.");
+      const answer = data.response || "No answer found.";
+      setResponse(answer);
       if (data.sources && Array.isArray(data.sources)) {
         setSources(data.sources);
       }
+      void playTtsResponse(buildSpokenTtsText(answer)).catch((error) => {
+        console.error("TTS failed for query:", error);
+      });
     } catch (error) {
       console.error("Query failed:", error);
       stopVoiceMeter();
@@ -605,18 +773,230 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, stopRealtimeTranscription, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
+
+  const handleStartLog = useCallback(async () => {
+    if (isRecording || isLoading) return;
+    stopResponseAudio();
+    shouldRecordRef.current = true;
+    setIsRecording(true);
+    setTranscript("");
+    setResponse("");
+    setSources([]);
+
+    try {
+      const stream = await startVoiceMeter();
+      if (!stream) throw new Error("Microphone stream unavailable.");
+      if (!shouldRecordRef.current) {
+        stopVoiceMeter();
+        return;
+      }
+      await startRealtimeTranscription(stream);
+      if (!shouldRecordRef.current) {
+        await stopRealtimeTranscription();
+        stopVoiceMeter();
+      }
+    } catch (error) {
+      console.error("Failed to start log recording:", error);
+      setIsRecording(false);
+      shouldRecordRef.current = false;
+      stopVoiceMeter();
+      const message = error instanceof Error ? error.message : "Unable to start transcription.";
+      setTranscript(`Transcription error: ${message}`);
+    }
+  }, [
+    isLoading,
+    isRecording,
+    startRealtimeTranscription,
+    startVoiceMeter,
+    stopResponseAudio,
+    stopRealtimeTranscription,
+    stopVoiceMeter,
+  ]);
+
+  const handleEndLog = useCallback(async () => {
+    if (!isRecording) return;
+    shouldRecordRef.current = false;
+    setIsRecording(false);
+
+    try {
+      const finalTranscript = await stopRealtimeTranscription();
+      stopVoiceMeter();
+
+      if (!finalTranscript) {
+        setTranscript("No speech detected. Try again.");
+        return;
+      }
+
+      setIsLoading(true);
+      setResponse("");
+      setSources([]);
+
+      const tail = "F-GKXA";
+      const res = await fetch("/api/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: finalTranscript,
+          tail,
+          technician: "Marc Delaunay",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Log failed.");
+
+      const confirmation = data.confirmation || "Log saved.";
+      setResponse(confirmation);
+      const count =
+        typeof data.intervention_count === "number" ? data.intervention_count : null;
+      setSources([
+        {
+          type: "history",
+          label: count === null ? `${tail} history` : `${tail} history (${count})`,
+        },
+      ]);
+      void playTtsResponse(confirmation).catch((error) => {
+        console.error("TTS failed for log:", error);
+      });
+    } catch (error) {
+      console.error("Log failed:", error);
+      stopVoiceMeter();
+      const message = error instanceof Error ? error.message : "Log failed.";
+      setResponse(`Error: ${message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
+
+  // ── Auto mode handlers ────────────────────────────
+  const handleStartAuto = useCallback(async () => {
+    if (isRecording || isLoading) return;
+    stopResponseAudio();
+    shouldRecordRef.current = true;
+    setIsRecording(true);
+    setTranscript("");
+    setResponse("");
+    setSources([]);
+
+    try {
+      const stream = await startVoiceMeter();
+      if (!stream) throw new Error("Microphone stream unavailable.");
+      if (!shouldRecordRef.current) {
+        stopVoiceMeter();
+        return;
+      }
+      await startRealtimeTranscription(stream);
+      if (!shouldRecordRef.current) {
+        await stopRealtimeTranscription();
+        stopVoiceMeter();
+      }
+    } catch (error) {
+      console.error("Failed to start auto recording:", error);
+      setIsRecording(false);
+      shouldRecordRef.current = false;
+      stopVoiceMeter();
+      const message = error instanceof Error ? error.message : "Unable to start transcription.";
+      setTranscript(`Transcription error: ${message}`);
+    }
+  }, [
+    isLoading,
+    isRecording,
+    startRealtimeTranscription,
+    startVoiceMeter,
+    stopResponseAudio,
+    stopRealtimeTranscription,
+    stopVoiceMeter,
+  ]);
+
+  const handleEndAuto = useCallback(async () => {
+    if (!isRecording) return;
+    shouldRecordRef.current = false;
+    setIsRecording(false);
+
+    try {
+      const finalTranscript = await stopRealtimeTranscription();
+      stopVoiceMeter();
+
+      if (!finalTranscript) {
+        setTranscript("No speech detected. Try again.");
+        return;
+      }
+
+      setIsLoading(true);
+      setResponse("");
+      setSources([]);
+
+      const res = await fetch("/api/orchestrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: finalTranscript,
+          technician: "Marc Delaunay",
+          tail: "F-GKXA",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Orchestration failed.");
+
+      const answer = data.response || "No response.";
+      setResponse(answer);
+
+      // Show detected intent + sources
+      const intentLabel = data.intent
+        ? `Detected: ${data.intent}${data.confidence ? ` (${Math.round(data.confidence * 100)}%)` : ""}`
+        : "auto";
+      const autoSources: LoreSource[] = [
+        { type: "intent", label: intentLabel },
+        ...(data.sources && Array.isArray(data.sources) ? data.sources : []),
+      ];
+      if (data.intervention_count !== undefined) {
+        autoSources.push({
+          type: "history",
+          label: `${data.intervention_count} intervention${data.intervention_count !== 1 ? "s" : ""} on record`,
+        });
+      }
+      setSources(autoSources);
+
+      void playTtsResponse(answer).catch((error) => {
+        console.error("TTS failed for auto:", error);
+      });
+    } catch (error) {
+      console.error("Auto orchestration failed:", error);
+      stopVoiceMeter();
+      const message = error instanceof Error ? error.message : "Orchestration failed.";
+      setResponse(`Error: ${message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
 
   useEffect(() => {
     return () => {
       shouldRecordRef.current = false;
       void stopRealtimeTranscription();
+      stopResponseAudio();
       stopVoiceMeter();
     };
-  }, [stopRealtimeTranscription, stopVoiceMeter]);
+  }, [stopRealtimeTranscription, stopResponseAudio, stopVoiceMeter]);
 
-  const onStart = mode === "capture" ? handleStartCapture : handleStartQuery;
-  const onEnd = mode === "capture" ? handleEndCapture : handleEndQuery;
+  const onStart =
+    mode === "auto"
+      ? handleStartAuto
+      : mode === "capture"
+        ? handleStartCapture
+        : mode === "query"
+          ? handleStartQuery
+          : handleStartLog;
+  const onEnd =
+    mode === "auto"
+      ? handleEndAuto
+      : mode === "capture"
+        ? handleEndCapture
+        : mode === "query"
+          ? handleEndQuery
+          : handleEndLog;
 
   return (
     <main className="min-h-screen flex flex-col bg-background text-foreground">
