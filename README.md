@@ -1,155 +1,80 @@
 # Lore
 
-> *"Marc knows why this engine hums funny in winter. Marc retired in November. You're alone in the hangar at 11pm. Good luck."*
+---
 
-**Lore is a voice AI mentor that rescues expert knowledge from retirement — and puts it in your ear at exactly the right moment.**
+## It's 11pm. You're alone in the hangar.
 
-Built at **Activate Your Voice** · Speechmatics × AI Collective Paris · Feb 28 – Mar 1, 2026
+The engine on F-GKXA is doing something weird.
+
+It's not in the job card. It's not in the manual.
+Your senior — 26 years on this engine — retired three months ago.
+
+You have a 6am departure. 200 passengers.
+
+**What do you do?**
 
 ---
 
-## The Knowledge Cliff
+## The problem nobody talks about
 
-Picture this: a senior aviation technician spends 26 years on CFM56 engines. He knows that *this specific aircraft* — tail F-GKXA — shows a weird harmonic vibration below 8°C that looks like a fault but isn't. He knows because he saw it four times. He never wrote it down because, honestly, why would he? It's just *obvious* once you've been there.
+Aviation manuals weigh 40kg and cover every known procedure.
 
-Then he retires.
+They cover nothing Marc knew.
 
-And on a cold Tuesday night in November, a 2-year junior named Thomas finds that vibration, alone, at 11pm, with a 6am departure slot and 200 passengers expecting to board.
+Marc knew that *this specific airframe* makes a funny vibration below 8°C that looks like a fault but isn't. He saw it four times. He never wrote it down — it was just obvious, after 26 years.
 
-**By 2033, 1 in 5 aviation maintenance jobs will go unfilled.** Every expert who walks out the door takes a warehouse of contextual knowledge that no manual ever captured. Standard tools (RAG on documents, knowledge bases, wikis) only retrieve what someone already thought to write down. **None of them can capture what wasn't.**
+Then Marc retired.
 
----
+And his knowledge — every exception, every airframe quirk, every "I've seen this before" — **disappeared with him.**
 
-## Enter Lore
+This happens every day. In aviation. In manufacturing. In energy. In every industry where expertise lives in people's heads, not in documents.
 
-Lore is a three-mode voice system that turns expert brains into persistent institutional memory — and delivers it hands-free on the shop floor.
-
-### Mode 1 — Capture (The Debrief)
-After an intervention, the senior talks to Lore. Lore doesn't just record: it **actively interviews** — probing for conditions, exceptions, contradictions, edge cases. It structures the knowledge and links it to the specific aircraft, component, and environmental context. Marc's 26 years become a searchable, attributable memory.
-
-### Mode 2 — Query (The Mentor in Your Ear)
-Thomas, hands covered in grease, asks: *"Lore, what do I know about N1 vibration on F-GKXA?"*
-
-Lore responds in three layers:
-- **SOP first** — what the manual says (always, no exceptions)
-- **Marc's wisdom** — what the expert actually observed about this component
-- **F-GKXA's history** — what happened *on this specific airframe* before
-
-The answer isn't just correct. It's contextual.
-
-### Mode 3 — Log (The Persistent Record)
-*"Lore, log: vibration 2.4 units, 6°C, no escalation per Marc's note."*
-
-Done. Aircraft memory updated. Future Thomas — or Thomas in 3 years — has one more data point.
-
-**Rule #1: Lore never contradicts a SOP. It completes it.**
+By 2033, **1 in 5 aviation maintenance jobs will go unfilled.** The knowledge cliff is already here.
 
 ---
 
-## The Demo
+## Lore
 
-```
-Thomas (11pm, hangar, F-GKXA, hands in the fan section):
+**Lore is the mentor who never retires.**
 
-  "Lore, I'm on F-GKXA, CFM56-5B, fan section. I'm getting an unusual
-   low-frequency vibration on the N1 shaft. It's not in the job card.
-   What do I know about this?"
+Before Marc left, he debriefed Lore. Just talking — Lore asked the questions, pulled out the context, stored everything linked to the aircraft, the component, the conditions.
 
-Lore:
+Now Thomas — 2 years experience, 11pm, alone — asks:
 
-  "According to SOP 72-21-00, N1 vibration above 4 units requires escalation.
-   However, Marc Delaunay noted in October that F-GKXA specifically shows a
-   harmonic resonance between 2–3 units in cold conditions — below 8°C.
-   It's a known characteristic of this airframe, not a defect.
-   He recommended monitoring across the next two cycles before escalating.
-   Vérifie toujours la procédure AMM avant d'intervenir."
+> *"Lore, I'm on F-GKXA. N1 shaft, unusual low-frequency vibration. It's not in the job card. What do I know?"*
 
-Thomas:
+Lore responds — out loud, no screen, hands stay in the engine:
 
-  "Got it. Logging: vibration at 2.4 units, temperature 6°C, no escalation
-   per Marc's note."
+> *"SOP says escalate above 4 units. But Marc noted that F-GKXA specifically shows a harmonic resonance between 2–3 units in cold weather — below 8°C. Known characteristic of this airframe. Not a defect. He recommended logging and monitoring."*
 
-Lore:
-
-  "Logged. F-GKXA memory updated."
-```
-
-Thomas makes the right call. The aircraft departs on time. Marc's knowledge lived past his retirement.
+Thomas makes the right call.
+The aircraft departs on time.
+**Marc's knowledge just saved the day from retirement.**
 
 ---
 
-## Why Not Just RAG?
+## Not RAG. Something better.
 
-RAG retrieves what you put in. Lore **extracts what seniors never thought to put anywhere.**
+Every AI knowledge tool today does the same thing: **search documents.**
 
-The difference:
-- Standard RAG → *"Here's what SOP 72-21-00 says."*
-- Lore → *"Here's what the SOP says, here's what Marc actually observed, and here's what happened on this specific jet the last 3 times someone saw this."*
+They can only find what someone already wrote down.
 
-Plus:
-- **Contradiction detection** — if Marc and Jean-Pierre disagree, Lore flags it rather than averaging them into slop
-- **Confidence scoring** — an observation confirmed by 4 technicians over 3 years outweighs an isolated note
-- **Full attribution** — every piece of knowledge carries a name, date, and conditions. Nothing is anonymous. Nothing is taken on blind trust.
+Lore captures what was *never written.* Through conversation — the way humans actually transfer knowledge — it extracts the exceptions, the context, the "you need to know this" that experts carry silently for decades.
+
+Then it delivers it exactly when you need it.
+Hands-free. Voice-first. SOP always first, oral wisdom always second.
 
 ---
 
-## Tech Stack
+## The line
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| Voice In | Speechmatics real-time STT | Purpose-built for noise. Hangars are loud. |
-| LLM | OpenAI GPT-4o | Synthesis, elicitation, intent detection |
-| Memory + RAG | Backboard (threads + docs) | Per-aircraft × per-technician persistent memory |
-| Voice Out | OpenAI TTS `gpt-4o-mini-tts` | Hands-free response — no screen needed |
-| Frontend | Next.js 14, TypeScript, Tailwind | |
-| Deploy | Vercel | |
+> SOPs tell you what to do.
+> Lore tells you what Marc would have said.
+
+**Tacit knowledge has always died with retirement.**
+
+**Lore makes it immortal.**
 
 ---
 
-## Safety, Because Aviation
-
-- Lore **never overrides a SOP**. Official documentation is always Priority 1.
-- Every response ends with: *"Vérifie toujours la procédure AMM avant d'intervenir."*
-- Oral knowledge enters with a `validated: false` flag — a lead technician reviews before activation in production.
-- Full GDPR traceability. Every contribution is attributed and auditable.
-
-Demo uses mock data only — no real EASA-regulated documents.
-
----
-
-## The Line That Matters
-
-> SOPs tell Thomas what to do.
-> Lore tells him what Marc would have said.
->
-> **Tacit knowledge has always died with retirement. Lore makes it immortal.**
-
----
-
-## Team
-
-Built in 24 hours by a team of 4 at the AI Collective Paris.
-
----
-
-## Getting Started
-
-```bash
-# Install dependencies
-npm install
-
-# Configure environment
-cp frontend/.env.example frontend/.env.local
-# Fill in: OPENAI_API_KEY, SPEECHMATICS_API_KEY, BACKBOARD_API_KEY + thread IDs
-
-# Create/validate Backboard assistant + threads
-npm run setup-backboard
-
-# Optional: seed demo memory (Marc's 26 years, pre-compressed)
-npm run seed-backboard
-
-# Start dev server
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
+*Built in 24 hours · Activate Your Voice Hackathon · Speechmatics × AI Collective Paris*
