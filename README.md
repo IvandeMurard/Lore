@@ -1,79 +1,62 @@
 # Lore
 
----
-
-## It's 11pm. You're alone in the hangar.
-
-The engine on F-GKXA is doing something weird.
-
-It's not in the job card. It's not in the manual.
-Your senior — 26 years on this engine — retired three months ago.
-
-You have a 6am departure. 200 passengers.
-
-**What do you do?**
+**The mentor who never retires.**
 
 ---
 
-## The problem nobody talks about
+## What is Lore?
 
-Aviation manuals weigh 40kg and cover every known procedure.
+Lore is a voice AI that captures the expertise of senior technicians — and puts it in the ear of juniors at the exact moment they need it.
 
-They cover nothing Marc knew.
+No screen. No manual. No senior on call at 11pm.
 
-Marc knew that *this specific airframe* makes a funny vibration below 8°C that looks like a fault but isn't. He saw it four times. He never wrote it down — it was just obvious, after 26 years.
-
-Then Marc retired.
-
-And his knowledge — every exception, every airframe quirk, every "I've seen this before" — **disappeared with him.**
-
-This happens every day. In aviation. In manufacturing. In energy. In every industry where expertise lives in people's heads, not in documents.
-
-By 2033, **1 in 5 aviation maintenance jobs will go unfilled.** The knowledge cliff is already here.
+Just ask. Lore answers.
 
 ---
 
-## Lore
+## Why?
 
-**Lore is the mentor who never retires.**
+Every industry runs on two kinds of knowledge.
 
-Before Marc left, he debriefed Lore. Just talking — Lore asked the questions, pulled out the context, stored everything linked to the aircraft, the component, the conditions.
+**The stuff that's written down** — manuals, SOPs, procedures.
+**The stuff that lives in people's heads** — the exceptions, the quirks, the "I've seen this before."
 
-Now Thomas — 2 years experience, 11pm, alone — asks:
+The first kind is searchable. The second kind retires.
 
-> *"Lore, I'm on F-GKXA. N1 shaft, unusual low-frequency vibration. It's not in the job card. What do I know?"*
+A senior technician with 26 years on a CFM56 engine knows things no manual will ever capture. He knows this specific aircraft vibrates funny in winter and it's fine. He knows because he saw it four times. He never wrote it down — it was just obvious.
 
-Lore responds — out loud, no screen, hands stay in the engine:
+Then he retires. And that knowledge is gone.
 
-> *"SOP says escalate above 4 units. But Marc noted that F-GKXA specifically shows a harmonic resonance between 2–3 units in cold weather — below 8°C. Known characteristic of this airframe. Not a defect. He recommended logging and monitoring."*
+**By 2033, 1 in 5 aviation maintenance jobs will go unfilled.** The knowledge cliff isn't coming. It's already here.
 
-Thomas makes the right call.
-The aircraft departs on time.
-**Marc's knowledge just saved the day from retirement.**
-
----
-
-## Not RAG. Something better.
-
-Every AI knowledge tool today does the same thing: **search documents.**
-
-They can only find what someone already wrote down.
-
-Lore captures what was *never written.* Through conversation — the way humans actually transfer knowledge — it extracts the exceptions, the context, the "you need to know this" that experts carry silently for decades.
-
-Then it delivers it exactly when you need it.
-Hands-free. Voice-first. SOP always first, oral wisdom always second.
+Lore fixes this — by making experts talk before they leave, and making that conversation available forever.
 
 ---
 
-## The line
+## How we use Speechmatics
 
-> SOPs tell you what to do.
-> Lore tells you what Marc would have said.
+Hangars are loud. Engines idle, tools drop, teams shout across the floor.
 
-**Tacit knowledge has always died with retirement.**
+Most voice AI breaks in that environment. Speechmatics doesn't.
 
-**Lore makes it immortal.**
+We use Speechmatics real-time STT directly in the browser — no server round-trip, no lag. A junior technician speaks with their hands inside an engine, and Lore transcribes them instantly, accurately, in noise that would defeat anything else.
+
+That's not a nice-to-have. **In a hangar at 11pm, it's the whole product.**
+
+---
+
+## What excites us about voice AI
+
+Voice is the only interface that disappears.
+
+Every other interface demands your attention — screen, keyboard, tap. Voice demands nothing. You just talk. That's why it's the right interface for anyone whose hands are full, whose eyes are busy, whose work doesn't stop for a screen.
+
+We're at the beginning of voice AI that actually works in the real world — noisy, unscripted, context-dependent. The models can finally understand. The transcription can finally handle real environments. The synthesis is finally natural enough that you stop noticing it.
+
+The use cases that open up aren't the obvious ones — not assistants, not chatbots. They're the invisible ones: the expert knowledge transferred without a meeting, the procedure confirmed without breaking your grip, the decision made with confidence at midnight with no one else around.
+
+**Voice AI that works in hard conditions unlocks the people who need it most.**
+That's what Lore is built on. That's what excites us.
 
 ---
 
