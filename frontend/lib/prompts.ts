@@ -6,6 +6,64 @@ import { AMM_DISCLAIMER } from "@/lib/safety";
 // Edit prompts here, never inline in route handlers.
 // ─────────────────────────────────────────────
 
+// ── KNOWLEDGE TAXONOMY ──────────────────────
+// Comprehensive classification of industrial knowledge types.
+// Used by the elicitation agent to tag captured knowledge.
+
+const KNOWLEDGE_TAXONOMY = `
+FORMAL DOCUMENTATION (the "as prescribed" layer):
+- Procedure: step-by-step task instructions
+- SOP: mandatory approved way to perform a task
+- Work Instruction: detailed task-specific instructions
+- Manual / AMM: official manufacturer guide
+- Checklist: verification list for completion and safety
+- Technical Drawing: visual component/system representation
+- BOM: parts list with quantities and specs
+- Specification: technical requirements a product must meet
+
+OPERATIONAL & PROCESS (how the system works):
+- Operation Mode: system behavior in different phases
+- Normal Operations: expected system behavior
+- Abnormal / Emergency: behavior during failures
+- System Architecture: how components connect and interact
+- Theory of Operation: engineering logic behind the design
+
+TACIT & EXPERIENTIAL (the gold — rarely written down):
+- Best Practice: most efficient or reliable method
+- Trick / Shortcut: non-obvious method saving time or effort
+- Workaround: temporary safe fix
+- Signs / Symptoms: subtle clues preceding a failure
+- Heuristic / Rule of Thumb: practical rule from experience
+- Anticipation: predicting next failure from current state
+- Spatial Knowledge / Feel: physical intuition (torque, clearance)
+- Contextual Condition: knowledge tied to specific environments
+
+RISK & RELIABILITY (failure, safety, probability):
+- Failure Mode: how a component typically fails
+- Root Cause: underlying reason for a failure
+- Risk Assessment: likelihood and severity evaluation
+- FMEA: systematic potential failure analysis
+- Hazard: conditions that could cause harm
+- Criticality: importance of component to safety
+
+FEEDBACK & IMPROVEMENT (learning from the past):
+- Lessons Learned / REX: insights from past events
+- Incident Report: formal documentation of what went wrong
+- Audit Finding: discovered deviation from standard
+- CAPA: corrective action to fix and prevent recurrence
+- Reliability Data: statistical failure analysis
+- Service Bulletin: manufacturer upgrade/inspection instruction
+- Airworthiness Directive: mandatory regulatory action
+
+PEDAGOGICAL (how to teach the knowledge):
+- Learning Objective: what the student should know after training
+- Scenario / Case Study: realistic teaching story
+- Job Aid: quick-reference tool (poster, card, app)
+- Mentoring Insight: one-on-one expert guidance wisdom
+- Competency Requirement: skills and knowledge for a role
+- Philosophy / Mindset: core attitude and values of the profession
+`.trim();
+
 // ── ORCHESTRATOR ─────────────────────────────
 // Classifies the user's intent from a voice transcript.
 // Returns strict JSON — no prose.
@@ -49,13 +107,12 @@ You combine 4 roles internally (never name them out loud):
 - System Thinker: Ensure completeness — Conditions (input) → Steps (action) → Expected result (output) + What can go wrong (failure mode).
 - Socratic Listener: Draw out knowledge with curiosity, not interrogation. Show surprise. Ask for examples.
 
-When the expert speaks, classify what you hear:
-- Context: Under what circumstances? (temperature, load, age, route pattern)
-- Action: What specifically does he do? (hands, tools, senses)
-- Trick: What does he do that is NOT in the book, but works?
-- Risk: Where would a beginner get it wrong?
-- Story: An anecdote that makes the knowledge memorable?
-- SOP gap: Does the official procedure match what he actually does?
+KNOWLEDGE TAXONOMY — use this to classify what you hear from the expert:
+${KNOWLEDGE_TAXONOMY}
+
+When the expert speaks, identify which knowledge types are present.
+Pay special attention to TACIT & EXPERIENTIAL knowledge — this is the gold that is rarely written down.
+Flag any SOP gap: does the official procedure match what he actually does?
 
 How to ask follow-up questions:
 - Ask ONE question at a time. Never more.
@@ -80,6 +137,7 @@ When the knowledge is complete, return a JSON block (after your spoken confirmat
   "aircraft": string | null,
   "conditions": string,
   "knowledge": string,
+  "knowledge_types": string[],  // types from the taxonomy above, e.g. ["Best Practice", "Trick / Shortcut", "Failure Mode"]
   "sop_gap": string | null,
   "teaching_tip": string | null,
   "failure_mode": string | null,
