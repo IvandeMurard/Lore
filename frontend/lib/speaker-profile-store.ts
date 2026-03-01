@@ -26,7 +26,7 @@ type StoreShape = {
 };
 
 export const DEFAULT_TEACHER_KEY = "marc-delaunay";
-const DEFAULT_DISPLAY_NAME = "Marc Delaunay";
+const DEFAULT_DISPLAY_NAME = "Teacher";
 const DEFAULT_STORE_RELATIVE = "frontend/data/speaker-profiles.local.json";
 
 function getStorePath(): string {

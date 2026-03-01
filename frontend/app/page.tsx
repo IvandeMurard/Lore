@@ -63,11 +63,12 @@ interface SpeakerFilterPayload {
 const RT_MAX_DELAY_SEC = 3;
 const RT_STOP_WAIT_PADDING_MS = 1200;
 const TEACHER_KEY = "marc-delaunay";
-const TEACHER_DISPLAY_NAME = "Marc Delaunay";
+const TEACHER_DISPLAY_NAME = "Teacher";
 const TEACHER_MIN_WORDS = 6;
 const TEACHER_MIN_RATIO = 0.25;
 const DIARIZATION_MAX_SPEAKERS = 4;
 const DIARIZATION_SPEAKER_SENSITIVITY = 0.6;
+const MIN_RECORDING_MS = 1000;
 
 function parseServerTiming(header: string | null): Record<string, number> {
   if (!header) return {};
@@ -173,6 +174,70 @@ function countWords(text: string): number {
   return trimmed.split(/\s+/).filter(Boolean).length;
 }
 
+function toTitleCaseName(input: string): string {
+  return input
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function normalizeNameCandidate(raw: string): string | null {
+  const cleaned = raw
+    .replace(/[^a-zA-ZÀ-ÿ' -]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return null;
+
+  const forbidden = new Set([
+    "my",
+    "name",
+    "is",
+    "i",
+    "am",
+    "this",
+    "teacher",
+    "hello",
+    "uh",
+    "um",
+    "ok",
+    "okay",
+  ]);
+
+  const parts = cleaned
+    .split(" ")
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 2)
+    .filter((part) => !forbidden.has(part.toLowerCase()))
+    .slice(0, 3);
+
+  if (parts.length === 0) return null;
+  const normalized = toTitleCaseName(parts.join(" "));
+  return normalized.length >= 2 && normalized.length <= 40 ? normalized : null;
+}
+
+function extractTeacherNameFromTranscript(transcript: string): string | null {
+  const text = transcript.trim();
+  if (!text) return null;
+
+  const patterns = [
+    /my name is\s+([a-zA-ZÀ-ÿ' -]{2,40}?)(?=[,.!?]|$)/i,
+    /i am\s+([a-zA-ZÀ-ÿ' -]{2,40}?)(?=[,.!?]|$)/i,
+    /i'm\s+([a-zA-ZÀ-ÿ' -]{2,40}?)(?=[,.!?]|$)/i,
+    /this is\s+([a-zA-ZÀ-ÿ' -]{2,40}?)(?=[,.!?]|$)/i,
+    /je m(?:'|’)appelle\s+([a-zA-ZÀ-ÿ' -]{2,40}?)(?=[,.!?]|$)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+    const name = normalizeNameCandidate(match[1]);
+    if (name) return name;
+  }
+
+  return null;
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName.toLowerCase();
@@ -249,6 +314,7 @@ export default function LorePage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recorderChunksRef = useRef<BlobPart[]>([]);
   const realtimeAvailableRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
 
   const stopVoiceMeter = useCallback(() => {
     meterSessionRef.current += 1;
@@ -279,9 +345,6 @@ export default function LorePage() {
 
   const stopResponseAudio = useCallback(() => {
     setIsTtsPlaying(false);
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
     const audio = responseAudioRef.current;
     if (audio) {
       audio.pause();
@@ -391,21 +454,8 @@ export default function LorePage() {
       const cleanText = text.trim().replace(/\s+/g, " ");
       if (!cleanText) return;
 
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        try {
-          const utterance = new SpeechSynthesisUtterance(cleanText);
-          utterance.rate = 1.03;
-          utterance.pitch = 1;
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(utterance);
-          return;
-        } catch (error) {
-          console.warn("Instant speech feedback failed, falling back to API TTS:", error);
-        }
-      }
-
       void playTtsResponse(cleanText).catch((error) => {
-        console.error("Fallback TTS feedback failed:", error);
+        console.error("OpenAI TTS feedback failed:", error);
       });
     },
     [playTtsResponse]
@@ -751,12 +801,24 @@ export default function LorePage() {
       const sample = await recordEnrollmentSample(10_000);
       setIsEnrollmentRecording(false);
       setIsRecording(false);
+      setLoadingMessage("Detecting teacher name from sample...");
+
+      let detectedTeacherName: string | null = null;
+      let enrollmentTranscript = "";
+      try {
+        enrollmentTranscript = await transcribeFallbackAudio(sample);
+        detectedTeacherName = extractTeacherNameFromTranscript(enrollmentTranscript);
+      } catch (error) {
+        console.warn("Teacher name detection from sample failed:", error);
+      }
+
       setLoadingMessage("Enrolling teacher voice profile...");
+      const displayNameForEnrollment = detectedTeacherName || TEACHER_DISPLAY_NAME;
 
       const formData = new FormData();
       formData.append("audio", sample);
       formData.append("teacher_key", TEACHER_KEY);
-      formData.append("display_name", TEACHER_DISPLAY_NAME);
+      formData.append("display_name", displayNameForEnrollment);
 
       const response = await fetch("/api/speakers/enroll", {
         method: "POST",
@@ -780,12 +842,20 @@ export default function LorePage() {
       setTeacherProfile(profile);
 
       const detailLines = [
+        `Teacher name: ${profile.display_name || displayNameForEnrollment}`,
         `Teacher key: ${profile.teacher_key}`,
         "Mode: realtime speaker diarization",
+        enrollmentTranscript
+          ? `Enrollment transcript: ${enrollmentTranscript}`
+          : null,
         profile.updated_at ? `Updated: ${profile.updated_at}` : null,
       ].filter(Boolean);
 
-      setResponse("Teacher diarization profile configured. Capture now filters to teacher speech when confidence is sufficient.");
+      setResponse(
+        `Teacher diarization profile configured${
+          profile.display_name ? ` for ${profile.display_name}` : ""
+        }. Capture now filters to teacher speech when confidence is sufficient.`
+      );
       setSources([
         {
           type: "system",
@@ -885,6 +955,7 @@ export default function LorePage() {
                     { content: "EASA", sounds_like: ["E A S A"] },
                     { content: "Lore" },
                     { content: "Airbus A320", sounds_like: ["A 320", "airbus 320", "airbus A three twenty"] },
+                    { content: "El Houssain", sounds_like: ["El Houssain", "L Hussein", "El ou sane"] },
                   ],
                 },
               };
@@ -1416,6 +1487,7 @@ export default function LorePage() {
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
+    recordingStartedAtRef.current = Date.now();
     setIsRecording(true);
     setLoadingMessage("Thinking…");
     setTranscript("");
@@ -1435,6 +1507,7 @@ export default function LorePage() {
       console.error("Failed to start capture recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      recordingStartedAtRef.current = null;
       void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
@@ -1456,6 +1529,18 @@ export default function LorePage() {
     if (!isRecording) return;
     shouldRecordRef.current = false;
     setIsRecording(false);
+    const startedAt = recordingStartedAtRef.current;
+    recordingStartedAtRef.current = null;
+    const recordingDurationMs = startedAt ? Date.now() - startedAt : 0;
+
+    if (recordingDurationMs > 0 && recordingDurationMs < MIN_RECORDING_MS) {
+      await resolveFinalTranscript();
+      stopVoiceMeter();
+      setResponse("");
+      setSources([]);
+      setTranscript("Recording not long enough.");
+      return;
+    }
 
     try {
       const {
@@ -1489,7 +1574,7 @@ export default function LorePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: finalTranscript,
-          technician: "Marc Delaunay",
+          technician: teacherProfile.display_name?.trim() || TEACHER_DISPLAY_NAME,
           tail: "F-GKXA",
           speaker_filter: speakerFilter,
         }),
@@ -1605,13 +1690,14 @@ export default function LorePage() {
       setIsLoading(false);
       setLoadingMessage("Thinking…");
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, speakInstantFeedback, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, speakInstantFeedback, stopVoiceMeter, teacherProfile.display_name]);
 
   const handleStartQuery = useCallback(async () => {
     if (isRecording || isLoading || isEnrollingTeacher) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
+    recordingStartedAtRef.current = Date.now();
     setIsRecording(true);
     setLoadingMessage("Thinking…");
     setTranscript("");
@@ -1624,6 +1710,7 @@ export default function LorePage() {
       console.error("Failed to start query recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      recordingStartedAtRef.current = null;
       void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
@@ -1643,6 +1730,18 @@ export default function LorePage() {
     if (!isRecording) return;
     shouldRecordRef.current = false;
     setIsRecording(false);
+    const startedAt = recordingStartedAtRef.current;
+    recordingStartedAtRef.current = null;
+    const recordingDurationMs = startedAt ? Date.now() - startedAt : 0;
+
+    if (recordingDurationMs > 0 && recordingDurationMs < MIN_RECORDING_MS) {
+      await resolveFinalTranscript();
+      stopVoiceMeter();
+      setResponse("");
+      setSources([]);
+      setTranscript("Recording not long enough.");
+      return;
+    }
 
     try {
       const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
@@ -1695,6 +1794,7 @@ export default function LorePage() {
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
+    recordingStartedAtRef.current = Date.now();
     setIsRecording(true);
     setLoadingMessage("Thinking…");
     setTranscript("");
@@ -1707,6 +1807,7 @@ export default function LorePage() {
       console.error("Failed to start log recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      recordingStartedAtRef.current = null;
       void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
@@ -1726,6 +1827,18 @@ export default function LorePage() {
     if (!isRecording) return;
     shouldRecordRef.current = false;
     setIsRecording(false);
+    const startedAt = recordingStartedAtRef.current;
+    recordingStartedAtRef.current = null;
+    const recordingDurationMs = startedAt ? Date.now() - startedAt : 0;
+
+    if (recordingDurationMs > 0 && recordingDurationMs < MIN_RECORDING_MS) {
+      await resolveFinalTranscript();
+      stopVoiceMeter();
+      setResponse("");
+      setSources([]);
+      setTranscript("Recording not long enough.");
+      return;
+    }
 
     try {
       const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
@@ -1747,7 +1860,7 @@ export default function LorePage() {
         body: JSON.stringify({
           transcript: finalTranscript,
           tail,
-          technician: "Marc Delaunay",
+          technician: teacherProfile.display_name?.trim() || TEACHER_DISPLAY_NAME,
         }),
       });
 
@@ -1779,7 +1892,7 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter, teacherProfile.display_name]);
 
   // ── Auto mode handlers ────────────────────────────
   const handleStartAuto = useCallback(async () => {
@@ -1787,6 +1900,7 @@ export default function LorePage() {
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
+    recordingStartedAtRef.current = Date.now();
     setIsRecording(true);
     setLoadingMessage("Thinking…");
     setTranscript("");
@@ -1799,6 +1913,7 @@ export default function LorePage() {
       console.error("Failed to start auto recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      recordingStartedAtRef.current = null;
       void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
@@ -1818,6 +1933,18 @@ export default function LorePage() {
     if (!isRecording) return;
     shouldRecordRef.current = false;
     setIsRecording(false);
+    const startedAt = recordingStartedAtRef.current;
+    recordingStartedAtRef.current = null;
+    const recordingDurationMs = startedAt ? Date.now() - startedAt : 0;
+
+    if (recordingDurationMs > 0 && recordingDurationMs < MIN_RECORDING_MS) {
+      await resolveFinalTranscript();
+      stopVoiceMeter();
+      setResponse("");
+      setSources([]);
+      setTranscript("Recording not long enough.");
+      return;
+    }
 
     try {
       const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
@@ -1837,7 +1964,7 @@ export default function LorePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: finalTranscript,
-          technician: "Marc Delaunay",
+          technician: teacherProfile.display_name?.trim() || TEACHER_DISPLAY_NAME,
           tail: "F-GKXA",
         }),
       });
@@ -1882,7 +2009,7 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter, teacherProfile.display_name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2005,7 +2132,7 @@ export default function LorePage() {
               <div className="flex flex-col">
                 <span className="text-sm font-medium">Teacher Speaker Diarization</span>
                 <span className="text-xs text-muted-foreground">
-                  Record 8-12s of teacher speaking alone to enable filtered capture.
+                  Record 8-12s of teacher speaking alone. Start with: "My name is ..."
                 </span>
               </div>
               <Badge variant={teacherProfile.configured ? "default" : "secondary"} className="text-xs">
