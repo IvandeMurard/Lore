@@ -300,12 +300,16 @@ Transcript:
         };
     }
 
+    const sopGap = extracted.sop_gap || "";
+    const teachingTip = extracted.teaching_tip || "";
+    const failureMode = extracted.failure_mode || "";
+
     const memoryMessage = `[ORAL KNOWLEDGE — ${new Date().toISOString().split("T")[0]}]
 Technician: ${technician}
 Aircraft: ${tail || "Unknown"}
 Component: ${extracted.component || component || "Unknown"}
 Conditions: ${extracted.conditions || "Standard"}
-Knowledge: ${extracted.knowledge || transcript}`;
+Knowledge: ${extracted.knowledge || transcript}${sopGap ? `\nSOP Gap: ${sopGap}` : ""}${teachingTip ? `\nTeaching Tip: ${teachingTip}` : ""}${failureMode ? `\nFailure Mode: ${failureMode}` : ""}`;
 
     const targets: PersistTarget[] = [];
     if (tail) {

@@ -21,6 +21,9 @@ type ExtractedKnowledge = {
     component?: string;
     conditions?: string;
     confidence?: number;
+    sop_gap?: string;
+    teaching_tip?: string;
+    failure_mode?: string;
 };
 
 type SpeakerFilterMetadata = {
@@ -187,12 +190,15 @@ Teacher ratio: ${
             }
 Reason: ${asString(speaker_filter.reason) || "n/a"}`
             : null;
+        const sopGap = asString(extracted.sop_gap);
+        const teachingTip = asString(extracted.teaching_tip);
+        const failureMode = asString(extracted.failure_mode);
         const memoryMessage = `[ORAL KNOWLEDGE — ${new Date().toISOString().split("T")[0]}]
 ${speakerFilterHeader ? `${speakerFilterHeader}\n` : ""}Technician: ${technicianName}
 Aircraft: ${tailCode}
 Component: ${componentName}
 Conditions: ${conditionsValue}
-Knowledge: ${knowledgeText}`;
+Knowledge: ${knowledgeText}${sopGap ? `\nSOP Gap: ${sopGap}` : ""}${teachingTip ? `\nTeaching Tip: ${teachingTip}` : ""}${failureMode ? `\nFailure Mode: ${failureMode}` : ""}`;
 
         const oralTargets: PersistTarget[] = [];
         const sopTargets: PersistTarget[] = [];
