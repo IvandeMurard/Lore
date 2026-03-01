@@ -7,8 +7,10 @@ import {
     type PersistTarget,
 } from "@/lib/backboard";
 import {
+    assessCaptureTranscript,
     buildCaptureResponsePayload,
     buildFallbackSopDraft,
+    buildSopKnowledgeInput,
     parseSopDraftOutput,
     renderSopDraftMarkdown,
 } from "@/lib/capture-sop";
@@ -19,6 +21,15 @@ type ExtractedKnowledge = {
     component?: string;
     conditions?: string;
     confidence?: number;
+};
+
+type SpeakerFilterMetadata = {
+    mode?: "teacher_filtered" | "degraded_full" | "no_profile";
+    teacher_key?: string;
+    teacher_ratio?: number;
+    teacher_words?: number;
+    full_words?: number;
+    reason?: string;
 };
 
 function asString(value: unknown): string {
@@ -37,12 +48,40 @@ function asString(value: unknown): string {
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { transcript, technician, tail, component, conditions } = body;
+        const { transcript, technician, tail, component, conditions, speaker_filter } = body as {
+            transcript?: string;
+            technician?: string;
+            tail?: string;
+            component?: string;
+            conditions?: string;
+            speaker_filter?: SpeakerFilterMetadata;
+        };
 
         if (!transcript) {
             return NextResponse.json(
                 { error: "transcript is required" },
                 { status: 400 }
+            );
+        }
+
+        const quality = assessCaptureTranscript(transcript);
+        if (!quality.accepted) {
+            return NextResponse.json(
+                {
+                    confirmation: "Capture disregarded: message was not actionable enough for SOP drafting.",
+                    capture_accepted: false,
+                    capture_rejection_reason: quality.reason,
+                    stored: false,
+                    stored_targets: [],
+                    failed_targets: [],
+                    degraded: false,
+                    retryable: false,
+                    sop_generated: false,
+                    sop_draft: null,
+                    sop_draft_markdown: "",
+                    sop_generation_warning: "Capture disregarded before SOP generation.",
+                },
+                { status: 200 }
             );
         }
 
@@ -77,7 +116,8 @@ Transcript:
         const tailCode = asString(tail) || "Unknown";
         const componentName = asString(extracted.component) || asString(component) || "Unknown";
         const conditionsValue = asString(extracted.conditions) || asString(conditions) || "Standard";
-        const knowledgeText = asString(extracted.knowledge) || transcript;
+        const extractedKnowledge = asString(extracted.knowledge) || transcript;
+        const knowledgeText = buildSopKnowledgeInput(extractedKnowledge, transcript) || extractedKnowledge;
 
         // 2. Generate SOP draft from extracted knowledge.
         const sopFallback = buildFallbackSopDraft({
@@ -86,7 +126,7 @@ Transcript:
             tail: tailCode,
             component: componentName,
             conditions: conditionsValue,
-            knowledge: knowledgeText,
+            knowledge: extractedKnowledge,
         });
 
         let sopGenerated = false;
@@ -137,8 +177,18 @@ SOP Markdown:
 ${sopDraftMarkdown}`;
 
         // 3. Build a rich message for Backboard memory storage
+        const speakerFilterHeader = speaker_filter
+            ? `Speaker filter mode: ${asString(speaker_filter.mode) || "unknown"}
+Teacher key: ${asString(speaker_filter.teacher_key) || "unknown"}
+Teacher ratio: ${
+                typeof speaker_filter.teacher_ratio === "number" && Number.isFinite(speaker_filter.teacher_ratio)
+                    ? speaker_filter.teacher_ratio.toFixed(2)
+                    : "n/a"
+            }
+Reason: ${asString(speaker_filter.reason) || "n/a"}`
+            : null;
         const memoryMessage = `[ORAL KNOWLEDGE — ${new Date().toISOString().split("T")[0]}]
-Technician: ${technicianName}
+${speakerFilterHeader ? `${speakerFilterHeader}\n` : ""}Technician: ${technicianName}
 Aircraft: ${tailCode}
 Component: ${componentName}
 Conditions: ${conditionsValue}
@@ -202,7 +252,10 @@ Knowledge: ${knowledgeText}`;
             sopGenerationWarning,
             persistence,
         });
-        return NextResponse.json(captureResponse.payload, {
+        return NextResponse.json({
+            ...captureResponse.payload,
+            speaker_filter,
+        }, {
             status: captureResponse.status,
         });
     } catch (error) {

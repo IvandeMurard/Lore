@@ -133,6 +133,9 @@ Rules:
 - If some details are missing, keep entries conservative and explicit.
 - Do not invent numeric thresholds.
 - Keep each list item under 20 words.
+- objective must be one concise sentence (max 25 words), never a verbatim transcript dump.
+- Ignore conversational fillers, acknowledgements, and role-play dialogue.
+- Convert spoken advice into concrete maintenance actions with expected outcomes.
 - procedure_steps must be sequential starting at 1.
 - The disclaimer must be exactly:
 ${JSON.stringify(AMM_DISCLAIMER)}

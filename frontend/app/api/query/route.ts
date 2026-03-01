@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
     getLatestGeneratedSopDraftSource,
     getBackboardErrorMessage,
+    getBackboardStatusCode,
     isBackboardTransientError,
     resolveThreadId,
     sendQueryMessage,
@@ -96,6 +97,9 @@ export async function POST(req: NextRequest) {
             retryable: false,
         });
     } catch (error) {
+        const details = getBackboardErrorMessage(error);
+        const backboardStatus = getBackboardStatusCode(error);
+
         if (isBackboardTransientError(error)) {
             console.warn("[/api/query] Backboard transient error:", error);
             return NextResponse.json(
@@ -109,13 +113,37 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        if (backboardStatus === 401 || backboardStatus === 403) {
+            return NextResponse.json(
+                {
+                    error: "Backboard authentication failed. Check BACKBOARD_API_KEY in frontend/.env.local.",
+                    retryable: false,
+                    degraded: true,
+                    details,
+                },
+                { status: 502 }
+            );
+        }
+
+        if (backboardStatus === 404) {
+            return NextResponse.json(
+                {
+                    error: "Backboard resource not found. Re-run setup and verify thread/assistant IDs.",
+                    retryable: false,
+                    degraded: true,
+                    details,
+                },
+                { status: 502 }
+            );
+        }
+
         console.error("[/api/query] Error:", error);
         return NextResponse.json(
             {
                 error: "Internal server error",
                 retryable: false,
                 degraded: true,
-                details: getBackboardErrorMessage(error),
+                details,
             },
             { status: 500 }
         );

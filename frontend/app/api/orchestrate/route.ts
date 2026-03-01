@@ -5,6 +5,7 @@ import {
     countMessages,
     getLatestGeneratedSopDraftSource,
     getBackboardErrorMessage,
+    getBackboardStatusCode,
     isBackboardTransientError,
     persistMessages,
     resolveThreadId,
@@ -16,6 +17,21 @@ import { ensureAmmDisclaimer } from "@/lib/safety";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
+const MIN_WRITE_INTENT_CONFIDENCE = 0.55;
+const MIN_SIGNAL_WORDS = 3;
+
+const FILLER_WORDS = new Set([
+    "uh",
+    "um",
+    "erm",
+    "ah",
+    "okay",
+    "ok",
+    "like",
+    "you",
+    "know",
+    "just",
+]);
 
 type Intent = "capture" | "query" | "log";
 
@@ -41,6 +57,16 @@ type OrchestrateResult = {
     retryable?: boolean;
 };
 
+function countSignalWords(transcript: string): number {
+    const words = transcript
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, " ")
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter(Boolean);
+    return words.filter((word) => !FILLER_WORDS.has(word)).length;
+}
+
 /**
  * POST /api/orchestrate
  *
@@ -64,12 +90,66 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        const signalWords = countSignalWords(transcript);
+        if (signalWords < MIN_SIGNAL_WORDS) {
+            return NextResponse.json(
+                {
+                    intent: "query",
+                    confidence: 0,
+                    aircraft: tail || null,
+                    component: null,
+                    response: ensureAmmDisclaimer(
+                        "I did not store that because the transcript was too short or unclear. Please repeat with a specific maintenance statement or question."
+                    ),
+                    sources: [
+                        {
+                            type: "system",
+                            label: "Low-signal transcript blocked",
+                            details: `Signal words detected: ${signalWords}. No capture/log write was performed.`,
+                        },
+                    ],
+                    degraded: false,
+                    retryable: false,
+                    blocked: true,
+                },
+                { status: 200 }
+            );
+        }
+
         // ── Step 1: Classify intent ──────────────────────
         const classification = await classifyIntent(transcript);
         const intent = classification.intent as Intent;
         const confidence = classification.confidence ?? 0;
         const detectedAircraft = classification.aircraft || tail || null;
         const detectedComponent = classification.component || null;
+
+        if (
+            (intent === "capture" || intent === "log") &&
+            confidence < MIN_WRITE_INTENT_CONFIDENCE
+        ) {
+            return NextResponse.json(
+                {
+                    intent: "query",
+                    confidence,
+                    aircraft: detectedAircraft,
+                    component: detectedComponent,
+                    response: ensureAmmDisclaimer(
+                        `I did not store this because intent confidence is too low (${Math.round(confidence * 100)}%). Please repeat clearly and say whether this is a log entry or knowledge capture.`
+                    ),
+                    sources: [
+                        {
+                            type: "system",
+                            label: "Low-confidence write blocked",
+                            details: `Detected intent: ${intent}\nConfidence: ${confidence.toFixed(2)}\nThreshold: ${MIN_WRITE_INTENT_CONFIDENCE.toFixed(2)}\nNo capture/log write was performed.`,
+                        },
+                    ],
+                    degraded: false,
+                    retryable: false,
+                    blocked: true,
+                },
+                { status: 200 }
+            );
+        }
 
         console.log("[/api/orchestrate] classified:", {
             intent,
@@ -121,6 +201,8 @@ export async function POST(req: NextRequest) {
         }, { status });
     } catch (error) {
         console.error("[/api/orchestrate] Error:", error);
+        const details = getBackboardErrorMessage(error);
+        const backboardStatus = getBackboardStatusCode(error);
 
         if (isBackboardTransientError(error)) {
             return NextResponse.json(
@@ -133,10 +215,50 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        if (backboardStatus === 401 || backboardStatus === 403) {
+            return NextResponse.json(
+                {
+                    error: "Backboard authentication failed. Check BACKBOARD_API_KEY in frontend/.env.local.",
+                    retryable: false,
+                    degraded: true,
+                    details,
+                },
+                { status: 502 }
+            );
+        }
+
+        if (backboardStatus === 404) {
+            return NextResponse.json(
+                {
+                    error: "Backboard resource not found. Re-run setup and verify thread/assistant IDs.",
+                    retryable: false,
+                    degraded: true,
+                    details,
+                },
+                { status: 502 }
+            );
+        }
+
+        if (
+            details.toLowerCase().includes("openai") ||
+            details.toLowerCase().includes("api key") ||
+            details.toLowerCase().includes("invalid_api_key")
+        ) {
+            return NextResponse.json(
+                {
+                    error: "OpenAI request failed. Check OPENAI_API_KEY in frontend/.env.local.",
+                    retryable: false,
+                    degraded: true,
+                    details,
+                },
+                { status: 502 }
+            );
+        }
+
         return NextResponse.json(
             {
                 error: "Internal server error",
-                details: getBackboardErrorMessage(error),
+                details,
                 retryable: false,
                 degraded: true,
             },

@@ -7,11 +7,18 @@ import { TranscriptPanel } from "@/components/transcript-panel";
 import { ResponsePanel, type LoreSource } from "@/components/response-panel";
 import { ParticleSphere } from "@/components/particle-sphere";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { buildSpokenTtsText } from "@/lib/tts";
 
 interface SpeechmaticsResult {
   type?: string;
-  alternatives?: Array<{ content?: string }>;
+  speaker?: string;
+  alternatives?: Array<{
+    content?: string;
+    speaker?: string;
+    speaker_name?: string;
+    speaker_tag?: string;
+  }>;
 }
 
 interface SpeechmaticsRealtimeMessage {
@@ -27,10 +34,40 @@ interface SpeechmaticsRealtimeMessage {
 interface ResolvedTranscript {
   transcript: string;
   fallbackError?: string;
+  speakerFilter?: SpeakerFilterPayload;
+  fullTranscript?: string;
+  teacherTranscript?: string;
+  inferredTeacherSpeakerLabel?: string | null;
+}
+
+interface TeacherSpeakerProfileResponse {
+  configured: boolean;
+  teacher_key: string;
+  display_name?: string | null;
+  identifier_count?: number;
+  updated_at?: string | null;
+}
+
+type SpeakerFilterMode = "teacher_filtered" | "degraded_full" | "no_profile";
+type CaptureScope = "teacher_only" | "full_conversation";
+
+interface SpeakerFilterPayload {
+  mode: SpeakerFilterMode;
+  teacher_key: string;
+  teacher_ratio: number;
+  teacher_words: number;
+  full_words: number;
+  reason?: string;
 }
 
 const RT_MAX_DELAY_SEC = 3;
 const RT_STOP_WAIT_PADDING_MS = 1200;
+const TEACHER_KEY = "marc-delaunay";
+const TEACHER_DISPLAY_NAME = "Marc Delaunay";
+const TEACHER_MIN_WORDS = 6;
+const TEACHER_MIN_RATIO = 0.25;
+const DIARIZATION_MAX_SPEAKERS = 4;
+const DIARIZATION_SPEAKER_SENSITIVITY = 0.6;
 
 function parseServerTiming(header: string | null): Record<string, number> {
   if (!header) return {};
@@ -68,10 +105,50 @@ function mergeTranscript(base: string, fragment: string): string {
   return startsWithPunctuation ? `${left}${right}` : `${left} ${right}`;
 }
 
-function resultsToText(results: SpeechmaticsResult[] | undefined): string {
+function getSpeakerLabel(result: SpeechmaticsResult): string | null {
+  if (typeof result.speaker === "string" && result.speaker.trim()) {
+    return result.speaker.trim().toLowerCase();
+  }
+  const alt = result.alternatives?.[0];
+  if (!alt) return null;
+  const candidate = alt.speaker ?? alt.speaker_name ?? alt.speaker_tag;
+  if (typeof candidate === "string" && candidate.trim()) {
+    return candidate.trim().toLowerCase();
+  }
+  return null;
+}
+
+function isUsableSpeakerLabel(label: string | null): label is string {
+  if (!label) return false;
+  return label !== "uu";
+}
+
+function findFirstUsableSpeakerLabel(
+  results: SpeechmaticsResult[] | undefined
+): string | null {
+  if (!results || results.length === 0) return null;
+  for (const result of results) {
+    const label = getSpeakerLabel(result);
+    if (isUsableSpeakerLabel(label)) {
+      return label;
+    }
+  }
+  return null;
+}
+
+function resultsToText(
+  results: SpeechmaticsResult[] | undefined,
+  speakerFilter?: string
+): string {
   if (!results || results.length === 0) return "";
   let text = "";
   for (const result of results) {
+    if (speakerFilter) {
+      const speakerLabel = getSpeakerLabel(result);
+      if (speakerLabel !== speakerFilter) {
+        continue;
+      }
+    }
     const token = result.alternatives?.[0]?.content?.trim() ?? "";
     if (!token) continue;
     text = mergeTranscript(text, token);
@@ -79,10 +156,21 @@ function resultsToText(results: SpeechmaticsResult[] | undefined): string {
   return text;
 }
 
-function getTranscriptFragment(data: SpeechmaticsRealtimeMessage): string {
+function getTranscriptFragment(
+  data: SpeechmaticsRealtimeMessage,
+  speakerFilter?: string
+): string {
+  if (!speakerFilter) {
   const metaTranscript = data.metadata?.transcript?.trim();
   if (metaTranscript) return metaTranscript;
-  return resultsToText(data.results);
+  }
+  return resultsToText(data.results, speakerFilter);
+}
+
+function countWords(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).filter(Boolean).length;
 }
 
 function getRealtimeWsCandidates(jwt: string, language: string): string[] {
@@ -113,6 +201,15 @@ export default function LorePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Thinking…");
   const [voiceLevel, setVoiceLevel] = useState(0);
+  const [isEnrollingTeacher, setIsEnrollingTeacher] = useState(false);
+  const [isEnrollmentRecording, setIsEnrollmentRecording] = useState(false);
+  const [teacherProfile, setTeacherProfile] = useState<TeacherSpeakerProfileResponse>({
+    configured: false,
+    teacher_key: TEACHER_KEY,
+  });
+  const [sttSpeakerMode, setSttSpeakerMode] = useState<SpeakerFilterMode>("no_profile");
+  const [sttSpeakerReason, setSttSpeakerReason] = useState<string | undefined>(undefined);
+  const [captureScope, setCaptureScope] = useState<CaptureScope>("teacher_only");
 
   const meterAnimationRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -128,6 +225,11 @@ export default function LorePage() {
   const realtimeSeqNoRef = useRef(0);
   const realtimePartialRef = useRef("");
   const realtimeFinalRef = useRef("");
+  const realtimeTeacherPartialRef = useRef("");
+  const realtimeTeacherFinalRef = useRef("");
+  const inferredTeacherSpeakerLabelRef = useRef<string | null>(null);
+  const currentRealtimeModeRef = useRef<LoreMode>("auto");
+  const currentSpeakerProfileRef = useRef<TeacherSpeakerProfileResponse | null>(null);
   const endOfTranscriptResolverRef = useRef<(() => void) | null>(null);
   const shouldRecordRef = useRef(false);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -164,6 +266,10 @@ export default function LorePage() {
   }, []);
 
   const stopResponseAudio = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+
     const audio = responseAudioRef.current;
     if (audio) {
       audio.pause();
@@ -263,6 +369,31 @@ export default function LorePage() {
       }
     },
     [stopResponseAudio]
+  );
+
+  const speakInstantFeedback = useCallback(
+    (text: string) => {
+      const cleanText = text.trim().replace(/\s+/g, " ");
+      if (!cleanText) return;
+
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        try {
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.rate = 1.03;
+          utterance.pitch = 1;
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utterance);
+          return;
+        } catch (error) {
+          console.warn("Instant speech feedback failed, falling back to API TTS:", error);
+        }
+      }
+
+      void playTtsResponse(cleanText).catch((error) => {
+        console.error("Fallback TTS feedback failed:", error);
+      });
+    },
+    [playTtsResponse]
   );
 
   const startVoiceMeter = useCallback(async () => {
@@ -436,6 +567,130 @@ export default function LorePage() {
     return (payload.transcript ?? "").trim();
   }, []);
 
+  const fetchTeacherProfileStatus = useCallback(async (): Promise<TeacherSpeakerProfileResponse> => {
+    const response = await fetch(`/api/speakers/profile?teacher_key=${encodeURIComponent(TEACHER_KEY)}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      let message = `Failed to load teacher profile (${response.status}).`;
+      try {
+        const payload = (await response.json()) as { error?: string };
+        if (payload.error) message = payload.error;
+      } catch {
+        const body = await response.text();
+        if (body) message = `${message} ${body}`;
+      }
+      throw new Error(message);
+    }
+
+    const payload = (await response.json()) as TeacherSpeakerProfileResponse;
+    return {
+      configured: Boolean(payload.configured),
+      teacher_key: payload.teacher_key || TEACHER_KEY,
+      display_name: payload.display_name ?? TEACHER_DISPLAY_NAME,
+      identifier_count: typeof payload.identifier_count === "number" ? payload.identifier_count : 0,
+      updated_at: payload.updated_at ?? null,
+    };
+  }, []);
+
+  const recordEnrollmentSample = useCallback(async (durationMs = 10_000): Promise<File> => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Microphone API is not available in this browser.");
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+
+    if (typeof MediaRecorder === "undefined") {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error("MediaRecorder is not supported in this browser.");
+    }
+
+    const chunks: BlobPart[] = [];
+    const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+    const supportedMime = mimeCandidates.find((mime) => MediaRecorder.isTypeSupported(mime));
+    let recorder: MediaRecorder;
+    try {
+      recorder = supportedMime
+        ? new MediaRecorder(stream, { mimeType: supportedMime })
+        : new MediaRecorder(stream);
+    } catch {
+      // Retry without explicit mime in case browser rejects options.
+      recorder = new MediaRecorder(stream);
+    }
+
+    return await new Promise<File>((resolve, reject) => {
+      let settled = false;
+      let stopTimer: number | null = null;
+      let hardTimeout: number | null = null;
+      const cleanup = () => {
+        if (stopTimer !== null) window.clearTimeout(stopTimer);
+        if (hardTimeout !== null) window.clearTimeout(hardTimeout);
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onerror = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("Teacher enrollment recording failed."));
+      };
+
+      recorder.onstop = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        const blobType = recorder.mimeType || "audio/webm";
+        const blob = new Blob(chunks, { type: blobType });
+        if (!blob.size) {
+          reject(new Error("Enrollment recording was empty."));
+          return;
+        }
+        const extension = blobType.includes("mp4") ? "mp4" : "webm";
+        resolve(new File([blob], `teacher-enrollment.${extension}`, { type: blobType }));
+      };
+
+      try {
+        recorder.start();
+      } catch (error) {
+        settled = true;
+        cleanup();
+        const message = error instanceof Error ? error.message : "Unable to start enrollment recording.";
+        reject(new Error(message));
+        return;
+      }
+
+      stopTimer = window.setTimeout(() => {
+        if (recorder.state !== "inactive") {
+          try {
+            recorder.requestData();
+          } catch {
+            // ignore
+          }
+          recorder.stop();
+        }
+      }, durationMs);
+
+      hardTimeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("Enrollment recording timed out."));
+      }, durationMs + 5_000);
+    });
+  }, []);
+
   const fetchRealtimeJwt = useCallback(async (): Promise<string> => {
     const response = await fetch("/api/speechmatics-token", { method: "POST" });
     if (!response.ok) {
@@ -457,8 +712,112 @@ export default function LorePage() {
     return payload.token;
   }, []);
 
+  const handleEnrollTeacher = useCallback(async () => {
+    if (isRecording || isLoading || isEnrollingTeacher) return;
+    stopResponseAudio();
+    setIsEnrollingTeacher(true);
+    setIsEnrollmentRecording(true);
+    setIsRecording(true);
+    setIsLoading(true);
+    setLoadingMessage("Recording teacher voice sample (10s)...");
+    setTranscript("Recording teacher voice sample... speak now.");
+    setResponse("Recording teacher sample for enrollment.");
+    setSources([]);
+
+    try {
+      const sample = await recordEnrollmentSample(10_000);
+      setIsEnrollmentRecording(false);
+      setIsRecording(false);
+      setLoadingMessage("Enrolling teacher voice profile...");
+
+      const formData = new FormData();
+      formData.append("audio", sample);
+      formData.append("teacher_key", TEACHER_KEY);
+      formData.append("display_name", TEACHER_DISPLAY_NAME);
+
+      const response = await fetch("/api/speakers/enroll", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        code?: string;
+        identifier_count?: number;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ||
+          `Teacher enrollment failed${payload.code ? ` (${payload.code})` : ""}.`
+        );
+      }
+
+      const profile = await fetchTeacherProfileStatus();
+      currentSpeakerProfileRef.current = profile;
+      setTeacherProfile(profile);
+
+      const detailLines = [
+        `Teacher key: ${profile.teacher_key}`,
+        "Mode: realtime speaker diarization",
+        profile.updated_at ? `Updated: ${profile.updated_at}` : null,
+      ].filter(Boolean);
+
+      setResponse("Teacher diarization profile configured. Capture now filters to teacher speech when confidence is sufficient.");
+      setSources([
+        {
+          type: "system",
+          label: "Teacher profile configured",
+          details: detailLines.join("\n"),
+        },
+      ]);
+      speakInstantFeedback("Teacher profile configured.");
+    } catch (error) {
+      setIsEnrollmentRecording(false);
+      setIsRecording(false);
+      let message = error instanceof Error ? error.message : "Teacher enrollment failed.";
+      if (error instanceof DOMException) {
+        if (error.name === "NotAllowedError") {
+          message = "Microphone permission denied. Allow microphone access and retry enrollment.";
+        } else if (error.name === "NotFoundError") {
+          message = "No microphone detected. Connect a microphone and retry enrollment.";
+        } else if (error.name === "NotReadableError") {
+          message = "Microphone is busy or unavailable. Close other apps using the mic and retry.";
+        }
+      }
+      setResponse(`Error: ${message}`);
+      setSources([
+        {
+          type: "system",
+          label: "Teacher enrollment failed",
+          details: message,
+        },
+      ]);
+    } finally {
+      setIsEnrollmentRecording(false);
+      setIsRecording(false);
+      setIsLoading(false);
+      setLoadingMessage("Thinking…");
+      setIsEnrollingTeacher(false);
+    }
+  }, [
+    fetchTeacherProfileStatus,
+    isEnrollingTeacher,
+    isEnrollmentRecording,
+    isLoading,
+    isRecording,
+    recordEnrollmentSample,
+    speakInstantFeedback,
+    stopResponseAudio,
+  ]);
+
   const connectRealtimeSocket = useCallback(
-    async (jwt: string, language: string, sampleRate: number, sessionId: number) => {
+    async (
+      jwt: string,
+      language: string,
+      sampleRate: number,
+      sessionId: number,
+      speakerProfile?: TeacherSpeakerProfileResponse | null
+    ) => {
       let lastError: Error | null = null;
       const urls = getRealtimeWsCandidates(jwt, language);
 
@@ -475,38 +834,50 @@ export default function LorePage() {
             }, 6000);
 
             ws.onopen = () => {
+              const startRecognitionPayload: Record<string, unknown> = {
+                message: "StartRecognition",
+                audio_format: {
+                  type: "raw",
+                  encoding: "pcm_f32le",
+                  sample_rate: Math.round(sampleRate),
+                },
+                transcription_config: {
+                  language,
+                  enable_partials: true,
+                  max_delay: RT_MAX_DELAY_SEC,
+                  operating_point: "enhanced",
+                  enable_entities: true,
+                  punctuation_overrides: {
+                    permitted_marks: [".", ",", "?"],
+                  },
+                  additional_vocab: [
+                    { content: "CFM56", sounds_like: ["CFM 56", "CFM fifty-six"] },
+                    { content: "CFM56-5B", sounds_like: ["CFM 56 5B", "CFM fifty-six five B"] },
+                    { content: "F-GKXA", sounds_like: ["foxtrot golf kilo x-ray alpha", "F G K X A"] },
+                    { content: "N1", sounds_like: ["N one", "en one"] },
+                    { content: "N2", sounds_like: ["N two", "en two"] },
+                    { content: "borescope", sounds_like: ["bore scope"] },
+                    { content: "AMM", sounds_like: ["A M M"] },
+                    { content: "SOP", sounds_like: ["S O P", "standard operating procedure"] },
+                    { content: "EASA", sounds_like: ["E A S A"] },
+                    { content: "Lore" },
+                    { content: "Airbus A320", sounds_like: ["A 320", "airbus 320", "airbus A three twenty"] },
+                  ],
+                },
+              };
+
+              if (speakerProfile?.configured) {
+                const transcriptionConfig = startRecognitionPayload.transcription_config as Record<string, unknown>;
+                transcriptionConfig.diarization = "speaker";
+                transcriptionConfig.speaker_diarization_config = {
+                  prefer_current_speaker: true,
+                  speaker_sensitivity: DIARIZATION_SPEAKER_SENSITIVITY,
+                  max_speakers: DIARIZATION_MAX_SPEAKERS,
+                };
+              }
+
               ws.send(
-                JSON.stringify({
-                  message: "StartRecognition",
-                  audio_format: {
-                    type: "raw",
-                    encoding: "pcm_f32le",
-                    sample_rate: Math.round(sampleRate),
-                  },
-                  transcription_config: {
-                    language,
-                    enable_partials: true,
-                    max_delay: RT_MAX_DELAY_SEC,
-                    operating_point: "enhanced",
-                    enable_entities: true,
-                    punctuation_overrides: {
-                      permitted_marks: [".", ",", "?"],
-                    },
-                    additional_vocab: [
-                      { content: "CFM56", sounds_like: ["CFM 56", "CFM fifty-six"] },
-                      { content: "CFM56-5B", sounds_like: ["CFM 56 5B", "CFM fifty-six five B"] },
-                      { content: "F-GKXA", sounds_like: ["foxtrot golf kilo x-ray alpha", "F G K X A"] },
-                      { content: "N1", sounds_like: ["N one", "en one"] },
-                      { content: "N2", sounds_like: ["N two", "en two"] },
-                      { content: "borescope", sounds_like: ["bore scope"] },
-                      { content: "AMM", sounds_like: ["A M M"] },
-                      { content: "SOP", sounds_like: ["S O P", "standard operating procedure"] },
-                      { content: "EASA", sounds_like: ["E A S A"] },
-                      { content: "Lore" },
-                      { content: "Airbus A320", sounds_like: ["A 320", "airbus 320", "airbus A three twenty"] },
-                    ],
-                  },
-                })
+                JSON.stringify(startRecognitionPayload)
               );
             };
 
@@ -565,17 +936,40 @@ export default function LorePage() {
       if (sessionId !== realtimeSessionRef.current) return;
       const data = parseRealtimeMessage(String(event.data));
       if (!data?.message) return;
+      const useTeacherDiarization =
+        currentRealtimeModeRef.current === "capture" &&
+        Boolean(currentSpeakerProfileRef.current?.configured);
+
+      if (useTeacherDiarization && !inferredTeacherSpeakerLabelRef.current) {
+        const inferred = findFirstUsableSpeakerLabel(data.results);
+        if (inferred) {
+          inferredTeacherSpeakerLabelRef.current = inferred;
+        }
+      }
+      const teacherLabel = inferredTeacherSpeakerLabelRef.current;
 
       if (data.message === "AddPartialTranscript") {
         realtimePartialRef.current = getTranscriptFragment(data);
+        realtimeTeacherPartialRef.current =
+          useTeacherDiarization && teacherLabel
+            ? getTranscriptFragment(data, teacherLabel)
+            : "";
         setTranscript(mergeTranscript(realtimeFinalRef.current, realtimePartialRef.current));
         return;
       }
 
       if (data.message === "AddTranscript") {
         const fragment = getTranscriptFragment(data);
+        const teacherFragment =
+          useTeacherDiarization && teacherLabel
+            ? getTranscriptFragment(data, teacherLabel)
+            : "";
         realtimeFinalRef.current = mergeTranscript(realtimeFinalRef.current, fragment);
+        if (teacherFragment) {
+          realtimeTeacherFinalRef.current = mergeTranscript(realtimeTeacherFinalRef.current, teacherFragment);
+        }
         realtimePartialRef.current = "";
+        realtimeTeacherPartialRef.current = "";
         setTranscript(realtimeFinalRef.current);
         return;
       }
@@ -616,6 +1010,9 @@ export default function LorePage() {
       realtimeSeqNoRef.current = 0;
       realtimeFinalRef.current = "";
       realtimePartialRef.current = "";
+      realtimeTeacherFinalRef.current = "";
+      realtimeTeacherPartialRef.current = "";
+      inferredTeacherSpeakerLabelRef.current = null;
 
       // Start capturing audio IMMEDIATELY into a pre-buffer
       // so the first words aren't lost during JWT + WebSocket setup
@@ -652,7 +1049,13 @@ export default function LorePage() {
 
       // Now connect (JWT + WebSocket) while audio is being buffered
       const jwt = await fetchRealtimeJwt();
-      const socket = await connectRealtimeSocket(jwt, "en", audioContext.sampleRate, sessionId);
+      const socket = await connectRealtimeSocket(
+        jwt,
+        "en",
+        audioContext.sampleRate,
+        sessionId,
+        currentRealtimeModeRef.current === "capture" ? currentSpeakerProfileRef.current : null
+      );
       attachRealtimeHandlers(socket, sessionId);
       realtimeSocketRef.current = socket;
 
@@ -714,30 +1117,152 @@ export default function LorePage() {
     const finalTranscript = mergeTranscript(realtimeFinalRef.current, realtimePartialRef.current);
     realtimeFinalRef.current = finalTranscript;
     realtimePartialRef.current = "";
+    realtimeTeacherFinalRef.current = mergeTranscript(
+      realtimeTeacherFinalRef.current,
+      realtimeTeacherPartialRef.current
+    );
+    realtimeTeacherPartialRef.current = "";
     if (finalTranscript) {
       setTranscript(finalTranscript);
     }
     return finalTranscript;
   }, []);
 
+  const selectCaptureTranscriptWithSpeakerPolicy = useCallback(
+    (
+      fullTranscript: string,
+      teacherTranscript: string,
+      profile: TeacherSpeakerProfileResponse | null,
+      reason?: string
+    ): { transcript: string; speakerFilter: SpeakerFilterPayload } => {
+      const fullWords = countWords(fullTranscript);
+      const teacherWords = countWords(teacherTranscript);
+      const ratio = fullWords > 0 ? teacherWords / fullWords : 0;
+
+      if (!profile?.configured) {
+        return {
+          transcript: fullTranscript,
+          speakerFilter: {
+            mode: "no_profile",
+            teacher_key: TEACHER_KEY,
+            teacher_ratio: ratio,
+            teacher_words: teacherWords,
+            full_words: fullWords,
+            reason: "teacher_profile_missing",
+          },
+        };
+      }
+
+      if (teacherWords >= TEACHER_MIN_WORDS && ratio >= TEACHER_MIN_RATIO) {
+        return {
+          transcript: teacherTranscript.trim() || fullTranscript,
+          speakerFilter: {
+            mode: "teacher_filtered",
+            teacher_key: profile.teacher_key || TEACHER_KEY,
+            teacher_ratio: ratio,
+            teacher_words: teacherWords,
+            full_words: fullWords,
+          },
+        };
+      }
+
+      return {
+        transcript: fullTranscript,
+        speakerFilter: {
+          mode: "degraded_full",
+          teacher_key: profile.teacher_key || TEACHER_KEY,
+          teacher_ratio: ratio,
+          teacher_words: teacherWords,
+          full_words: fullWords,
+          reason: reason || "teacher_unmatched_or_low_confidence",
+        },
+      };
+    },
+    []
+  );
+
   const resolveFinalTranscript = useCallback(async (): Promise<ResolvedTranscript> => {
     const realtimeTranscript = (await stopRealtimeTranscription()).trim();
     const backupAudio = await stopBackupRecorder();
+    const isCaptureMode = currentRealtimeModeRef.current === "capture";
+    const speakerProfile = currentSpeakerProfileRef.current;
+    const inferredTeacherSpeakerLabel = inferredTeacherSpeakerLabelRef.current;
+    const teacherRealtimeTranscript = mergeTranscript(
+      realtimeTeacherFinalRef.current,
+      realtimeTeacherPartialRef.current
+    ).trim();
 
     if (realtimeTranscript) {
       realtimeAvailableRef.current = true;
-      return { transcript: realtimeTranscript };
+      if (!isCaptureMode) {
+        return { transcript: realtimeTranscript };
+      }
+      if (captureScope === "full_conversation") {
+        return {
+          transcript: realtimeTranscript,
+          speakerFilter: {
+            mode: speakerProfile?.configured ? "degraded_full" : "no_profile",
+            teacher_key: speakerProfile?.teacher_key || TEACHER_KEY,
+            teacher_ratio: 0,
+            teacher_words: 0,
+            full_words: countWords(realtimeTranscript),
+            reason: "full_conversation_selected",
+          },
+          fullTranscript: realtimeTranscript,
+          teacherTranscript: teacherRealtimeTranscript,
+          inferredTeacherSpeakerLabel,
+        };
+      }
+      const selected = selectCaptureTranscriptWithSpeakerPolicy(
+        realtimeTranscript,
+        teacherRealtimeTranscript,
+        speakerProfile,
+        inferredTeacherSpeakerLabel ? undefined : "teacher_label_not_inferred"
+      );
+      if (selected.transcript) {
+        setTranscript(selected.transcript);
+      }
+      return {
+        transcript: selected.transcript,
+        speakerFilter: selected.speakerFilter,
+        fullTranscript: realtimeTranscript,
+        teacherTranscript: teacherRealtimeTranscript,
+        inferredTeacherSpeakerLabel,
+      };
     }
 
     if (!backupAudio) {
       if (!realtimeAvailableRef.current) {
+        const speakerFilter = isCaptureMode
+          ? {
+            mode: speakerProfile?.configured ? "degraded_full" : "no_profile",
+            teacher_key: speakerProfile?.teacher_key || TEACHER_KEY,
+            teacher_ratio: 0,
+            teacher_words: 0,
+            full_words: 0,
+            reason: "realtime_transcript_unavailable",
+          } satisfies SpeakerFilterPayload
+          : undefined;
         return {
           transcript: "",
           fallbackError:
             "Fallback STT failed: backup audio was not captured. Check mic permissions and browser recording support.",
+          speakerFilter,
         };
       }
-      return { transcript: "" };
+      return {
+        transcript: "",
+        speakerFilter: isCaptureMode
+          ? {
+            mode: speakerProfile?.configured ? "degraded_full" : "no_profile",
+            teacher_key: speakerProfile?.teacher_key || TEACHER_KEY,
+            teacher_ratio: 0,
+            teacher_words: 0,
+            full_words: 0,
+            reason: "no_transcript_available",
+          }
+          : undefined,
+      };
     }
 
     try {
@@ -745,17 +1270,91 @@ export default function LorePage() {
       if (fallbackTranscript) {
         setTranscript(fallbackTranscript);
       }
-      return { transcript: fallbackTranscript };
+      if (!isCaptureMode) {
+        return { transcript: fallbackTranscript };
+      }
+      const fallbackWords = countWords(fallbackTranscript);
+      if (captureScope === "full_conversation") {
+        return {
+          transcript: fallbackTranscript,
+          speakerFilter: {
+            mode: speakerProfile?.configured ? "degraded_full" : "no_profile",
+            teacher_key: speakerProfile?.teacher_key || TEACHER_KEY,
+            teacher_ratio: 0,
+            teacher_words: 0,
+            full_words: fallbackWords,
+            reason: "full_conversation_selected",
+          },
+          fullTranscript: fallbackTranscript,
+        };
+      }
+      return {
+        transcript: fallbackTranscript,
+        speakerFilter: {
+          mode: speakerProfile?.configured ? "degraded_full" : "no_profile",
+          teacher_key: speakerProfile?.teacher_key || TEACHER_KEY,
+          teacher_ratio: 0,
+          teacher_words: 0,
+          full_words: fallbackWords,
+          reason: "fallback_transcription_used",
+        },
+        fullTranscript: fallbackTranscript,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown fallback transcription error.";
       const fallbackError = `Fallback STT failed: ${message}`;
       console.error(fallbackError, error);
-      return { transcript: "", fallbackError };
+      return {
+        transcript: "",
+        fallbackError,
+        speakerFilter: isCaptureMode
+          ? {
+            mode: speakerProfile?.configured ? "degraded_full" : "no_profile",
+            teacher_key: speakerProfile?.teacher_key || TEACHER_KEY,
+            teacher_ratio: 0,
+            teacher_words: 0,
+            full_words: 0,
+            reason: "fallback_transcription_failed",
+          }
+          : undefined,
+      };
     }
-  }, [stopBackupRecorder, stopRealtimeTranscription, transcribeFallbackAudio]);
+  }, [
+    captureScope,
+    selectCaptureTranscriptWithSpeakerPolicy,
+    stopBackupRecorder,
+    stopRealtimeTranscription,
+    transcribeFallbackAudio,
+  ]);
 
   const startSpeechCaptureSession = useCallback(
-    async (modeLabel: string) => {
+    async (modeLabel: LoreMode) => {
+      currentRealtimeModeRef.current = modeLabel;
+      if (modeLabel === "capture") {
+        if (captureScope === "full_conversation") {
+          currentSpeakerProfileRef.current = null;
+        } else {
+          try {
+            const profile = await fetchTeacherProfileStatus();
+            currentSpeakerProfileRef.current = profile;
+            setTeacherProfile(profile);
+          } catch (error) {
+            console.warn("Failed to refresh teacher profile before capture:", error);
+            const missingProfile: TeacherSpeakerProfileResponse = {
+              configured: false,
+              teacher_key: TEACHER_KEY,
+              display_name: TEACHER_DISPLAY_NAME,
+              identifier_count: 0,
+              updated_at: null,
+            };
+            currentSpeakerProfileRef.current = missingProfile;
+            setTeacherProfile(missingProfile);
+          }
+        }
+      } else {
+        currentSpeakerProfileRef.current = null;
+      }
+
       const stream = await startVoiceMeter();
       if (!stream) throw new Error("Microphone stream unavailable.");
 
@@ -781,6 +1380,8 @@ export default function LorePage() {
       // Cleanup is handled by the release/end handlers.
     },
     [
+      captureScope,
+      fetchTeacherProfileStatus,
       startBackupRecorder,
       startRealtimeTranscription,
       startVoiceMeter,
@@ -788,7 +1389,7 @@ export default function LorePage() {
   );
 
   const handleStartCapture = useCallback(async () => {
-    if (isRecording || isLoading) return;
+    if (isRecording || isLoading || isEnrollingTeacher) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -797,6 +1398,13 @@ export default function LorePage() {
     setTranscript("");
     setResponse("");
     setSources([]);
+    if (captureScope === "full_conversation") {
+      setSttSpeakerMode(teacherProfile.configured ? "degraded_full" : "no_profile");
+      setSttSpeakerReason("full_conversation_selected");
+    } else {
+      setSttSpeakerMode(teacherProfile.configured ? "degraded_full" : "no_profile");
+      setSttSpeakerReason(undefined);
+    }
 
     try {
       await startSpeechCaptureSession("capture");
@@ -810,8 +1418,11 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    isEnrollingTeacher,
     isLoading,
     isRecording,
+    teacherProfile.configured,
+    captureScope,
     startSpeechCaptureSession,
     stopResponseAudio,
     stopBackupRecorder,
@@ -824,17 +1435,31 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const { transcript: finalTranscript, fallbackError } = await resolveFinalTranscript();
+      const {
+        transcript: finalTranscript,
+        fallbackError,
+        speakerFilter,
+        fullTranscript,
+        teacherTranscript,
+        inferredTeacherSpeakerLabel,
+      } = await resolveFinalTranscript();
       stopVoiceMeter();
       if (!finalTranscript) {
         setTranscript(fallbackError ?? "No speech detected. Try again.");
         return;
+      }
+      if (speakerFilter) {
+        setSttSpeakerMode(speakerFilter.mode);
+        setSttSpeakerReason(speakerFilter.reason);
       }
 
       setIsLoading(true);
       setLoadingMessage("Captured information. Drafting SOP...");
       setResponse("");
       setSources([]);
+      speakInstantFeedback(
+        "Captured information. An SOP has been created for this information. Drafting details now."
+      );
 
       const res = await fetch("/api/capture", {
         method: "POST",
@@ -843,12 +1468,15 @@ export default function LorePage() {
           transcript: finalTranscript,
           technician: "Marc Delaunay",
           tail: "F-GKXA",
+          speaker_filter: speakerFilter,
         }),
       });
 
       const data = (await res.json()) as {
         error?: string;
         confirmation?: string;
+        capture_accepted?: boolean;
+        capture_rejection_reason?: string;
         sop_generated?: boolean;
         sop_draft_markdown?: string;
         sop_generation_warning?: string | null;
@@ -858,13 +1486,52 @@ export default function LorePage() {
       const confirmation = data.confirmation || "Knowledge captured.";
       const sopMarkdown = (data.sop_draft_markdown || "").trim();
 
+      if (data.capture_accepted === false) {
+        setResponse(confirmation);
+        setSources([
+          {
+            type: "system",
+            label: "Capture disregarded",
+            details: `Reason: ${data.capture_rejection_reason || "capture_not_actionable"}\n\nTranscript:\n${finalTranscript}`,
+          },
+        ]);
+        void playTtsResponse(confirmation).catch((error) => {
+          console.error("TTS failed for capture:", error);
+        });
+        return;
+      }
+
       const captureSources: LoreSource[] = [
         {
           type: "oral",
           label: "Captured just now",
-          details: `Captured transcript:\n${finalTranscript}`,
+          details:
+            speakerFilter?.mode === "teacher_filtered" && fullTranscript
+              ? `Selected transcript (used for SOP/memory):\n${finalTranscript}\n\nFull conversation transcript:\n${fullTranscript}`
+              : `Captured transcript:\n${finalTranscript}`,
         },
       ];
+      if (speakerFilter) {
+        if (speakerFilter.reason === "full_conversation_selected") {
+          captureSources.push({
+            type: "system",
+            label: "Full conversation capture",
+            details: `Using full conversation transcript by user selection.\nFull words: ${speakerFilter.full_words}`,
+          });
+        } else if (speakerFilter.mode === "teacher_filtered") {
+          captureSources.push({
+            type: "system",
+            label: "Teacher-only filtered",
+            details: `Teacher transcript selected for capture.\nDetected teacher speaker label: ${inferredTeacherSpeakerLabel ?? "unknown"}\nTeacher ratio: ${speakerFilter.teacher_ratio.toFixed(2)}\nTeacher words: ${speakerFilter.teacher_words}\nFull words: ${speakerFilter.full_words}${teacherTranscript ? `\n\nTeacher-only transcript candidate:\n${teacherTranscript}` : ""}`,
+          });
+        } else {
+          captureSources.push({
+            type: "system",
+            label: "Speaker ID degraded",
+            details: `Using full transcript.\nMode: ${speakerFilter.mode}\nReason: ${speakerFilter.reason || "teacher_unmatched_or_low_confidence"}\nTeacher ratio: ${speakerFilter.teacher_ratio.toFixed(2)}`,
+          });
+        }
+      }
       if (data.sop_generated) {
         captureSources.push({
           type: "sop",
@@ -915,10 +1582,10 @@ export default function LorePage() {
       setIsLoading(false);
       setLoadingMessage("Thinking…");
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, speakInstantFeedback, stopVoiceMeter]);
 
   const handleStartQuery = useCallback(async () => {
-    if (isRecording || isLoading) return;
+    if (isRecording || isLoading || isEnrollingTeacher) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -940,6 +1607,7 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    isEnrollingTeacher,
     isLoading,
     isRecording,
     startSpeechCaptureSession,
@@ -976,7 +1644,10 @@ export default function LorePage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Query failed.");
+      if (!res.ok) {
+        const detail = typeof data?.details === "string" ? data.details : "";
+        throw new Error([data?.error || "Query failed.", detail].filter(Boolean).join(" "));
+      }
 
       const answer = data.response || "No answer found.";
       setResponse(answer);
@@ -997,7 +1668,7 @@ export default function LorePage() {
   }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
 
   const handleStartLog = useCallback(async () => {
-    if (isRecording || isLoading) return;
+    if (isRecording || isLoading || isEnrollingTeacher) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -1019,6 +1690,7 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    isEnrollingTeacher,
     isLoading,
     isRecording,
     startSpeechCaptureSession,
@@ -1057,7 +1729,10 @@ export default function LorePage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Log failed.");
+      if (!res.ok) {
+        const detail = typeof data?.details === "string" ? data.details : "";
+        throw new Error([data?.error || "Log failed.", detail].filter(Boolean).join(" "));
+      }
 
       const confirmation = data.confirmation || "Log saved.";
       setResponse(confirmation);
@@ -1085,7 +1760,7 @@ export default function LorePage() {
 
   // ── Auto mode handlers ────────────────────────────
   const handleStartAuto = useCallback(async () => {
-    if (isRecording || isLoading) return;
+    if (isRecording || isLoading || isEnrollingTeacher) return;
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -1107,6 +1782,7 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    isEnrollingTeacher,
     isLoading,
     isRecording,
     startSpeechCaptureSession,
@@ -1144,7 +1820,10 @@ export default function LorePage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Orchestration failed.");
+      if (!res.ok) {
+        const detail = typeof data?.details === "string" ? data.details : "";
+        throw new Error([data?.error || "Orchestration failed.", detail].filter(Boolean).join(" "));
+      }
 
       const answer = data.response || "No response.";
       setResponse(answer);
@@ -1181,6 +1860,33 @@ export default function LorePage() {
       setIsLoading(false);
     }
   }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const profile = await fetchTeacherProfileStatus();
+        if (cancelled) return;
+        currentSpeakerProfileRef.current = profile;
+        setTeacherProfile(profile);
+      } catch (error) {
+        if (cancelled) return;
+        console.warn("Failed to load teacher profile status:", error);
+        const fallbackProfile: TeacherSpeakerProfileResponse = {
+          configured: false,
+          teacher_key: TEACHER_KEY,
+          display_name: TEACHER_DISPLAY_NAME,
+          identifier_count: 0,
+          updated_at: null,
+        };
+        currentSpeakerProfileRef.current = fallbackProfile;
+        setTeacherProfile(fallbackProfile);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchTeacherProfileStatus]);
 
   useEffect(() => {
     return () => {
@@ -1221,6 +1927,69 @@ export default function LorePage() {
       <div className="flex-1 container max-w-2xl mx-auto px-4 py-6 flex flex-col gap-6">
         <ModeToggle value={mode} onValueChange={setMode} />
 
+        {mode === "capture" && (
+          <div className="rounded-md border border-border bg-card/60 p-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">Capture scope</span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={captureScope === "teacher_only" ? "default" : "secondary"}
+                  disabled={isRecording || isLoading || isEnrollingTeacher}
+                  onClick={() => setCaptureScope("teacher_only")}
+                >
+                  Teacher only
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={captureScope === "full_conversation" ? "default" : "secondary"}
+                  disabled={isRecording || isLoading || isEnrollingTeacher}
+                  onClick={() => setCaptureScope("full_conversation")}
+                >
+                  Full conversation
+                </Button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col">
+                <span className="text-sm font-medium">Teacher Speaker Diarization</span>
+                <span className="text-xs text-muted-foreground">
+                  Record 8-12s of teacher speaking alone to enable filtered capture.
+                </span>
+              </div>
+              <Badge variant={teacherProfile.configured ? "default" : "secondary"} className="text-xs">
+                {teacherProfile.configured ? "Teacher profile: configured" : "Teacher profile: missing"}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={isRecording || isLoading || isEnrollingTeacher}
+                onClick={handleEnrollTeacher}
+              >
+                {isEnrollmentRecording
+                  ? "Recording sample..."
+                  : isEnrollingTeacher
+                    ? "Enrolling..."
+                    : "Enroll teacher"}
+              </Button>
+              {teacherProfile.updated_at && (
+                <span className="text-xs text-muted-foreground">
+                  Last update: {teacherProfile.updated_at}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Last capture speaker mode: {sttSpeakerMode}
+              {sttSpeakerReason ? ` (${sttSpeakerReason})` : ""}
+            </p>
+          </div>
+        )}
+
         <div className="flex flex-col items-center gap-6">
           <div className="relative flex items-center justify-center w-[280px] h-[280px] rounded-full">
             <ParticleSphere
@@ -1234,7 +2003,7 @@ export default function LorePage() {
             onStart={onStart}
             onEnd={onEnd}
             isRecording={isRecording}
-            disabled={isLoading}
+            disabled={isLoading || isEnrollingTeacher}
           />
           <p className="text-xs text-muted-foreground text-center">
             Hold to speak · Release to send

@@ -22,6 +22,14 @@ export type SOPDraft = {
     disclaimer: string;
 };
 
+export type CaptureQualityAssessment = {
+    accepted: boolean;
+    reason: string | null;
+    normalizedTranscript: string;
+    wordCount: number;
+    actionableSignalCount: number;
+};
+
 type CapturePayloadParams = {
     technicianName: string;
     tailCode: string;
@@ -40,6 +48,117 @@ function asRecord(value: unknown): UnknownRecord | null {
 
 function asString(value: unknown): string {
     return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanWhitespace(value: string): string {
+    return value.replace(/\s+/g, " ").trim();
+}
+
+function splitWords(value: string): string[] {
+    return value
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, " ")
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter(Boolean);
+}
+
+function dedupeList(values: string[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const value of values) {
+        const key = value.toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(value);
+    }
+    return out;
+}
+
+const FILLER_WORDS = new Set([
+    "uh",
+    "um",
+    "erm",
+    "ah",
+    "okay",
+    "ok",
+    "like",
+    "sir",
+    "you",
+    "know",
+]);
+
+const ACTIONABLE_HINTS = [
+    "inspect",
+    "inspection",
+    "check",
+    "verify",
+    "record",
+    "monitor",
+    "replace",
+    "tighten",
+    "calibrate",
+    "borescope",
+    "blade",
+    "fan",
+    "compressor",
+    "leak",
+    "wear",
+    "damage",
+    "torque",
+    "vibration",
+    "temperature",
+    "pressure",
+];
+
+export function assessCaptureTranscript(transcript: string): CaptureQualityAssessment {
+    const normalizedTranscript = cleanWhitespace(transcript);
+    const words = splitWords(normalizedTranscript);
+    const wordCount = words.length;
+
+    if (!normalizedTranscript || wordCount < 8) {
+        return {
+            accepted: false,
+            reason: "capture_too_short",
+            normalizedTranscript,
+            wordCount,
+            actionableSignalCount: 0,
+        };
+    }
+
+    const fillerCount = words.filter((w) => FILLER_WORDS.has(w)).length;
+    const fillerRatio = fillerCount / Math.max(1, wordCount);
+    const actionableSignalCount = ACTIONABLE_HINTS.reduce((count, hint) => (
+        normalizedTranscript.toLowerCase().includes(hint) ? count + 1 : count
+    ), 0);
+
+    if (actionableSignalCount === 0 && wordCount < 30) {
+        return {
+            accepted: false,
+            reason: "capture_not_actionable",
+            normalizedTranscript,
+            wordCount,
+            actionableSignalCount,
+        };
+    }
+
+    if (fillerRatio > 0.32 && actionableSignalCount < 2) {
+        return {
+            accepted: false,
+            reason: "capture_low_signal",
+            normalizedTranscript,
+            wordCount,
+            actionableSignalCount,
+        };
+    }
+
+    return {
+        accepted: true,
+        reason: null,
+        normalizedTranscript,
+        wordCount,
+        actionableSignalCount,
+    };
 }
 
 function normalizeList(value: unknown, fallback: string[]): string[] {
@@ -76,6 +195,124 @@ function normalizeProcedureSteps(value: unknown, fallback: SOPProcedureStep[]): 
     return steps.length > 0 ? steps : fallback;
 }
 
+function summarizeObjective(text: string, component: string | null): string {
+    const cleaned = text
+        .replace(/\b(uh+|um+|erm+|ah+|okay|ok|sir)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const sentences = cleaned
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length >= 20);
+
+    const candidate = sentences[0] ?? cleaned;
+    if (!candidate) {
+        return component
+            ? `Perform a safe and traceable maintenance task on ${component}.`
+            : "Perform a safe and traceable maintenance task.";
+    }
+
+    const truncated = candidate.length > 180 ? `${candidate.slice(0, 177).trim()}...` : candidate;
+    return truncated;
+}
+
+function splitSentences(text: string): string[] {
+    return text
+        .replace(/\s+/g, " ")
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length >= 12);
+}
+
+function cleanKnowledgeLine(text: string): string {
+    return cleanWhitespace(
+        text
+            .replace(/\b(uh+|um+|erm+|ah+)\b/gi, "")
+            .replace(/\b(okay|ok)\b/gi, "")
+            .replace(/\b(i'?ll be doing it|i'?ll do it|understood|got it)\b/gi, "")
+    );
+}
+
+function inferComponentFromText(text: string): string | null {
+    const lower = text.toLowerCase();
+    if (lower.includes("blade")) return "blade section";
+    if (lower.includes("fan")) return "fan section";
+    if (lower.includes("compressor")) return "compressor section";
+    if (lower.includes("borescope")) return "borescope inspection point";
+    if (lower.includes("n1")) return "N1 system";
+    if (lower.includes("n2")) return "N2 system";
+    return null;
+}
+
+function expectedResultForInstruction(instruction: string): string {
+    const lower = instruction.toLowerCase();
+    if (/wear|tear|crack|damage|blade/.test(lower)) {
+        return "No unacceptable wear, crack, or blade damage is observed.";
+    }
+    if (/leak/.test(lower)) {
+        return "No active leak is observed and the area remains clean.";
+    }
+    if (/vibration/.test(lower)) {
+        return "Vibration behavior is stable and deviations are documented.";
+    }
+    if (/record|log|document/.test(lower)) {
+        return "A traceable maintenance record is created with key findings.";
+    }
+    if (/escalat|report|flag/.test(lower)) {
+        return "Abnormal findings are escalated to authorized maintenance authority.";
+    }
+    return "Inspection outcome is verified and documented for traceability.";
+}
+
+function buildProcedureStepsFromKnowledge(knowledge: string): SOPProcedureStep[] {
+    const candidates = splitSentences(knowledge)
+        .map((sentence) => cleanKnowledgeLine(sentence))
+        .filter(Boolean)
+        .filter((line) => /inspect|check|verify|monitor|look|record|log|review|compare|confirm|escalat|report|flag|wear|blade|damage|leak|vibration/i.test(line))
+        .slice(0, 4);
+
+    const steps = dedupeList(candidates)
+        .map((line, idx) => ({
+            step: idx + 1,
+            instruction: line.replace(/[.]+$/g, ""),
+            expected_result: expectedResultForInstruction(line),
+        }));
+
+    if (steps.length === 0) {
+        return [];
+    }
+
+    const hasRecordStep = steps.some((s) => /record|log|document/i.test(s.instruction));
+    if (!hasRecordStep) {
+        steps.push({
+            step: steps.length + 1,
+            instruction: "Record findings and deviations in the maintenance log.",
+            expected_result: "A complete, traceable maintenance record is available.",
+        });
+    }
+
+    const hasEscalationStep = steps.some((s) => /escalat|report|flag/i.test(s.instruction));
+    if (!hasEscalationStep) {
+        steps.push({
+            step: steps.length + 1,
+            instruction: "Escalate immediately if findings exceed normal limits.",
+            expected_result: "Critical issues are handed over to certified authority.",
+        });
+    }
+
+    return steps.map((s, idx) => ({ ...s, step: idx + 1 }));
+}
+
+export function buildSopKnowledgeInput(rawKnowledge: string, rawTranscript: string): string {
+    const source = cleanWhitespace(rawKnowledge || rawTranscript);
+    if (!source) return "";
+    const lines = splitSentences(source)
+        .map((line) => cleanKnowledgeLine(line))
+        .filter((line) => line.length >= 12);
+    return dedupeList(lines).join("\n");
+}
+
 function normalizeSopDraft(raw: unknown, fallback: SOPDraft): { draft: SOPDraft; sopGenerated: boolean } {
     const rec = asRecord(raw);
     if (!rec) {
@@ -85,7 +322,7 @@ function normalizeSopDraft(raw: unknown, fallback: SOPDraft): { draft: SOPDraft;
     const title = asString(rec.title) || fallback.title;
     const aircraft = toNullableField(asString(rec.aircraft)) ?? fallback.aircraft;
     const component = toNullableField(asString(rec.component)) ?? fallback.component;
-    const objective = asString(rec.objective) || fallback.objective;
+    const objective = summarizeObjective(asString(rec.objective) || fallback.objective, component);
     const preconditions = normalizeList(rec.preconditions, fallback.preconditions);
     const safetyChecks = normalizeList(rec.safety_checks, fallback.safety_checks);
     const procedureSteps = normalizeProcedureSteps(rec.procedure_steps, fallback.procedure_steps);
@@ -126,9 +363,15 @@ export function buildFallbackSopDraft(params: {
     knowledge: string;
 }): SOPDraft {
     const aircraft = toNullableField(params.tail);
-    const component = toNullableField(params.component);
+    const inferredComponent = inferComponentFromText(`${params.knowledge} ${params.transcript}`);
+    const component = toNullableField(params.component) ?? inferredComponent;
     const titleComponent = component ?? "maintenance task";
-    const objective = params.knowledge || params.transcript;
+    const normalizedKnowledge = buildSopKnowledgeInput(params.knowledge, params.transcript);
+    const objective = summarizeObjective(
+        normalizedKnowledge || params.knowledge || params.transcript,
+        component
+    );
+    const knowledgeDrivenSteps = buildProcedureStepsFromKnowledge(normalizedKnowledge);
 
     return {
         title: `Draft SOP - ${titleComponent}`,
@@ -143,28 +386,30 @@ export function buildFallbackSopDraft(params: {
             "Confirm aircraft condition and local work area safety.",
             "Confirm required tools and documentation are available.",
         ],
-        procedure_steps: [
-            {
-                step: 1,
-                instruction: "Review the captured observation and task context.",
-                expected_result: "Task scope is clear before intervention.",
-            },
-            {
-                step: 2,
-                instruction: "Perform the inspection or action described by the senior technician.",
-                expected_result: "Findings are documented with component context.",
-            },
-            {
-                step: 3,
-                instruction: "Record outcomes and any deviations from expected behavior.",
-                expected_result: "Traceable intervention record is available.",
-            },
-            {
-                step: 4,
-                instruction: "Escalate if the result is outside expected limits.",
-                expected_result: "Issue is handed over according to maintenance process.",
-            },
-        ],
+        procedure_steps: knowledgeDrivenSteps.length > 0
+            ? knowledgeDrivenSteps
+            : [
+                {
+                    step: 1,
+                    instruction: "Review the captured observation and task context.",
+                    expected_result: "Task scope is clear before intervention.",
+                },
+                {
+                    step: 2,
+                    instruction: "Perform the inspection or action described by the senior technician.",
+                    expected_result: "Findings are documented with component context.",
+                },
+                {
+                    step: 3,
+                    instruction: "Record outcomes and any deviations from expected behavior.",
+                    expected_result: "Traceable intervention record is available.",
+                },
+                {
+                    step: 4,
+                    instruction: "Escalate if the result is outside expected limits.",
+                    expected_result: "Issue is handed over according to maintenance process.",
+                },
+            ],
         escalation_conditions: [
             "Unexpected component behavior during inspection.",
             "Any uncertainty about procedure applicability.",
@@ -207,13 +452,15 @@ export function parseSopDraftOutput(
 
 export function renderSopDraftMarkdown(draft: SOPDraft): string {
     const lines: string[] = [];
-    lines.push(`## ${draft.title}`);
+    lines.push(`# ${draft.title}`);
+    lines.push("");
+    lines.push("> Status: Draft (unvalidated)");
     lines.push("");
     lines.push(`**Aircraft:** ${draft.aircraft ?? "N/A"}`);
     lines.push(`**Component:** ${draft.component ?? "N/A"}`);
     lines.push("");
     lines.push("### Objective");
-    lines.push(draft.objective);
+    lines.push(`- ${draft.objective}`);
     lines.push("");
     lines.push("### Preconditions");
     for (const item of draft.preconditions) {
@@ -227,8 +474,8 @@ export function renderSopDraftMarkdown(draft: SOPDraft): string {
     lines.push("");
     lines.push("### Procedure Steps");
     for (const step of draft.procedure_steps) {
-        lines.push(`${step.step}. ${step.instruction}`);
-        lines.push(`   - Expected result: ${step.expected_result}`);
+        lines.push(`${step.step}. **Action:** ${step.instruction}`);
+        lines.push(`   **Expected result:** ${step.expected_result}`);
     }
     lines.push("");
     lines.push("### Escalation Conditions");
@@ -241,6 +488,7 @@ export function renderSopDraftMarkdown(draft: SOPDraft): string {
         lines.push(`- ${item}`);
     }
     lines.push("");
+    lines.push("### Compliance");
     lines.push(`**Disclaimer:** ${AMM_DISCLAIMER}`);
     return lines.join("\n");
 }
