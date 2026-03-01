@@ -113,6 +113,7 @@ export default function LorePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Thinking…");
   const [voiceLevel, setVoiceLevel] = useState(0);
+  const [isTtsPlaying, setIsTtsPlaying] = useState(false);
 
   const meterAnimationRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -164,6 +165,7 @@ export default function LorePage() {
   }, []);
 
   const stopResponseAudio = useCallback(() => {
+    setIsTtsPlaying(false);
     const audio = responseAudioRef.current;
     if (audio) {
       audio.pause();
@@ -233,6 +235,7 @@ export default function LorePage() {
       console.log("[tts] response-ready", timingSnapshot);
 
       const clearAudioRefs = () => {
+        setIsTtsPlaying(false);
         if (responseAudioRef.current === audio) {
           responseAudioRef.current = null;
         }
@@ -242,6 +245,8 @@ export default function LorePage() {
         }
       };
 
+      audio.onplay = () => setIsTtsPlaying(true);
+      audio.onpause = () => setIsTtsPlaying(false);
       audio.onended = clearAudioRefs;
       audio.onerror = clearAudioRefs;
 
@@ -304,7 +309,7 @@ export default function LorePage() {
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.85;
+      analyser.smoothingTimeConstant = 0.92;
       source.connect(analyser);
 
       const data = new Uint8Array(analyser.fftSize);
@@ -323,8 +328,16 @@ export default function LorePage() {
         }
 
         const rms = Math.sqrt(sumSquares / data.length);
-        const nextLevel = Math.min(1, Math.max(0, (rms - 0.015) * 12));
-        setVoiceLevel((prev) => prev * 0.72 + nextLevel * 0.28);
+        const noiseFloor = 0.015;
+        const preGain = 9.5;
+        const compression = 0.95;
+        const rawLevel = Math.max(0, (rms - noiseFloor) * preGain);
+        const compressedLevel = rawLevel / (1 + rawLevel * compression);
+        const nextLevel = Math.min(1, compressedLevel * 1.22);
+        setVoiceLevel((prev) => {
+          const smoothing = nextLevel > prev ? 0.16 : 0.1;
+          return prev + (nextLevel - prev) * smoothing;
+        });
         meterAnimationRef.current = requestAnimationFrame(sample);
       };
 
@@ -1227,6 +1240,7 @@ export default function LorePage() {
               level={voiceLevel}
               particleCount={700}
               isResponding={isLoading}
+              isSpeaking={isTtsPlaying}
               className="absolute inset-0"
             />
           </div>

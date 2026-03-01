@@ -10,8 +10,10 @@ interface ParticleSphereProps {
   level?: number;
   /** Number of particles on the sphere */
   particleCount?: number;
-  /** True while the assistant is generating/answering */
+  /** True while the assistant is generating/thinking */
   isResponding?: boolean;
+  /** True while TTS audio is actively playing */
+  isSpeaking?: boolean;
   className?: string;
 }
 
@@ -44,13 +46,28 @@ function mixPoint(a: Point3D, b: Point3D, t: number): Point3D {
   };
 }
 
-function createCubePointsFromSphere(spherePoints: Point3D[]): Point3D[] {
-  const softness = 0.24;
-  return spherePoints.map((p) => {
-    const maxAxis = Math.max(Math.abs(p.x), Math.abs(p.y), Math.abs(p.z), 1e-6);
-    const t = 1 / maxAxis;
-    const cubePoint = { x: p.x * t * 0.82, y: p.y * t * 0.82, z: p.z * t * 0.82 };
-    return mixPoint(cubePoint, p, softness);
+function createHourglassPointsFromSphere(spherePoints: Point3D[]): Point3D[] {
+  const softness = 0.14;
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+
+  return spherePoints.map((p, i) => {
+    const y = p.y * 0.78;
+    const absY = Math.min(Math.abs(y), 0.999);
+    const lobeCenter = 0.5;
+    const lobeWidth = 0.2;
+    const lobe = Math.exp(-Math.pow((absY - lobeCenter) / lobeWidth, 2));
+    const edgeClose = Math.pow(Math.max(0, 1 - absY), 0.55);
+    const waistRadius = 0.05;
+    const lobeRadius = 0.55;
+    const targetRadius = (waistRadius + lobeRadius * lobe) * edgeClose;
+    const radialLength = Math.hypot(p.x, p.z);
+    const theta = radialLength > 1e-4 ? Math.atan2(p.z, p.x) : i * goldenAngle;
+    const hourglassPoint = {
+      x: Math.cos(theta) * targetRadius,
+      y,
+      z: Math.sin(theta) * targetRadius,
+    };
+    return mixPoint(hourglassPoint, p, softness);
   });
 }
 
@@ -63,21 +80,24 @@ export function ParticleSphere({
   level = 0,
   particleCount = 700,
   isResponding = false,
+  isSpeaking = false,
   className,
 }: ParticleSphereProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shapePoints = useMemo(() => {
     const sphere = fibonacciSphere(particleCount);
-    const cube = createCubePointsFromSphere(sphere);
-    return { sphere, cube };
+    const hourglass = createHourglassPointsFromSphere(sphere);
+    return { sphere, hourglass };
   }, [particleCount]);
   const animationRef = useRef<number>(0);
   const spinTimeRef = useRef(0);
   const waveTimeRef = useRef(0);
   const targetLevelRef = useRef(level);
   const smoothLevelRef = useRef(level);
-  const targetRespondRef = useRef(isResponding ? 1 : 0);
-  const respondBlendRef = useRef(isResponding ? 1 : 0);
+  const targetThinkRef = useRef(isResponding ? 1 : 0);
+  const thinkBlendRef = useRef(isResponding ? 1 : 0);
+  const targetSpeakRef = useRef(isSpeaking ? 1 : 0);
+  const speakBlendRef = useRef(isSpeaking ? 1 : 0);
   const spinVelocityRef = useRef(0.004);
 
   useEffect(() => {
@@ -85,8 +105,12 @@ export function ParticleSphere({
   }, [level]);
 
   useEffect(() => {
-    targetRespondRef.current = isResponding ? 1 : 0;
+    targetThinkRef.current = isResponding ? 1 : 0;
   }, [isResponding]);
+
+  useEffect(() => {
+    targetSpeakRef.current = isSpeaking ? 1 : 0;
+  }, [isSpeaking]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -108,18 +132,21 @@ export function ParticleSphere({
     const centerY = size / 2;
     const baseRadius = 90;
     const expandScale = 0.52; // max deformation depth before hard cap
-    const deformationLevelLimit = 0.72; // loudness threshold where size stops increasing
+    const deformationLevelLimit = 0.82; // loudness threshold where size stops increasing
     const idleSpinSpeed = 0.0042;
     const speakingSpinBoost = 0.011;
     const respondingSpinBoost = 0.005;
     const baseWaveSpeed = 0.018;
 
     function draw() {
-      smoothLevelRef.current += (targetLevelRef.current - smoothLevelRef.current) * 0.12;
+      smoothLevelRef.current += (targetLevelRef.current - smoothLevelRef.current) * 0.08;
       const reactiveLevel = smoothLevelRef.current;
       const isActive = reactiveLevel > 0.01;
-      respondBlendRef.current += (targetRespondRef.current - respondBlendRef.current) * 0.08;
-      const respondBlend = respondBlendRef.current;
+      thinkBlendRef.current += (targetThinkRef.current - thinkBlendRef.current) * 0.08;
+      speakBlendRef.current += (targetSpeakRef.current - speakBlendRef.current) * 0.08;
+      const thinkBlend = thinkBlendRef.current;
+      const speakBlend = speakBlendRef.current;
+      const speakWaveStrength = smoothstep(speakBlend);
       const cappedLevel = Math.min(reactiveLevel, deformationLevelLimit);
       const overdriveRaw = Math.max(
         0,
@@ -129,26 +156,52 @@ export function ParticleSphere({
       const overdrive = overdriveRaw * overdriveRaw * (3 - 2 * overdriveRaw);
 
       const targetSpinVelocity =
-        idleSpinSpeed + reactiveLevel * speakingSpinBoost + respondBlend * respondingSpinBoost;
-      spinVelocityRef.current += (targetSpinVelocity - spinVelocityRef.current) * 0.08;
+        (idleSpinSpeed +
+          reactiveLevel * speakingSpinBoost +
+          thinkBlend * respondingSpinBoost) *
+        (1 - speakWaveStrength);
+      spinVelocityRef.current += (targetSpinVelocity - spinVelocityRef.current) * 0.05;
       spinTimeRef.current += spinVelocityRef.current;
-      waveTimeRef.current += baseWaveSpeed + cappedLevel * 0.018 + overdrive * 0.006;
+      waveTimeRef.current += baseWaveSpeed + cappedLevel * 0.015 + overdrive * 0.002;
       const spinT = spinTimeRef.current;
       const waveT = waveTimeRef.current;
 
       context.clearRect(0, 0, size, size);
 
+      const thinkMorphStrength = smoothstep(thinkBlend) * (1 - speakWaveStrength);
+
       shapePoints.sphere.forEach((spherePoint, i) => {
-        const cubePoint = shapePoints.cube[i];
-        const p = mixPoint(spherePoint, cubePoint, smoothstep(respondBlend));
+        const hourglassPoint = shapePoints.hourglass[i];
+        const basePoint = mixPoint(spherePoint, hourglassPoint, thinkMorphStrength);
+        const lineT = particleCount > 1 ? i / (particleCount - 1) : 0.5;
+        const hash = Math.sin(i * 12.9898) * 43758.5453;
+        const noise = hash - Math.floor(hash);
+        const lane = (i % 7) - 3;
+        const laneOffsetY = lane * 0.04;
+        const laneOffsetX = (noise - 0.5) * 0.045;
+        const chaosPhase = waveT * (2 + noise * 1.7) + i * 0.13;
+        const jitterX = Math.sin(chaosPhase * 1.9 + noise * 9.7) * 0.06;
+        const jitterY = Math.sin(chaosPhase * 2.7 - noise * 13.3) * 0.08;
+        const jitterZ = Math.cos(chaosPhase * 2.3 + noise * 7.1) * 0.045;
+        const lineX = lerp(-1.1, 1.1, lineT) + laneOffsetX + jitterX * speakWaveStrength;
+        const lineY =
+          Math.sin(lineX * 8 + waveT * 4.2) * 0.29 +
+          laneOffsetY * 0.62 +
+          jitterY * speakWaveStrength;
+        const lineZ = (noise - 0.5) * 0.03 + jitterZ * speakWaveStrength;
+        const ttsPoint = { x: lineX, y: lineY, z: lineZ };
+        const p = mixPoint(basePoint, ttsPoint, speakWaveStrength);
+        const px = p.x;
+        const py = p.y;
+        const pz = p.z;
 
         // Continuous, smooth idle rotation while preserving actual 3D shape.
         const spinAngle = spinT * 0.6;
         const cosA = Math.cos(spinAngle);
         const sinA = Math.sin(spinAngle);
-        const x2 = p.x * cosA - p.z * sinA;
-        const y2 = p.y;
-        const z2 = p.x * sinA + p.z * cosA;
+        const x2 = px * cosA - pz * sinA;
+        const y2 = py;
+        const z2 = px * sinA + pz * cosA;
 
         // Signed deformation so some regions push outward while others pull inward.
         const localPhase = waveT * 2.6 + p.x * 3.2 + p.y * 3.2 + p.z * 3.2;
@@ -157,14 +210,15 @@ export function ParticleSphere({
           waveT * 1.9 - p.x * 4.4 + p.y * 2.8 - p.z * 3.5
         );
         const textureWave = Math.sin(
-          waveT * (4.3 + overdrive * 1.8) + p.x * 7.6 - p.y * 6.8 + p.z * 7.2
+          waveT * (4.3 + overdrive * 0.9) + p.x * 7.6 - p.y * 6.8 + p.z * 7.2
         );
         let signedDisplacement = isActive
           ? localWave * 0.58 +
             counterWave * 0.3 +
-            textureWave * (0.12 + overdrive * 0.18)
+            textureWave * (0.1 + overdrive * 0.1)
           : 0;
-        const sharpness = 1 + overdrive * 1.6;
+        signedDisplacement *= 1 - speakWaveStrength;
+        const sharpness = 1 + overdrive * 0.7;
         signedDisplacement =
           Math.sign(signedDisplacement) *
           Math.pow(Math.abs(signedDisplacement), sharpness);
@@ -177,12 +231,18 @@ export function ParticleSphere({
         const r3d = baseRadius * radiusScale;
 
         // Project to 2D (perspective)
-        const perspective = 1 + z2 * 0.4;
+        const perspectiveFactor = lerp(0.4, 0.1, speakWaveStrength);
+        const perspective = 1 + z2 * perspectiveFactor;
         const screenX = centerX + (x2 / perspective) * r3d;
         const screenY = centerY + (y2 / perspective) * r3d;
 
-        const particleRadius = Math.max(0.4, 0.65 + reactiveLevel * 0.55);
-        const alpha = 0.18 + 0.68 * (z2 * 0.5 + 0.5);
+        const ttsRadiusScale = lerp(1, 0.72, speakWaveStrength);
+        const ttsScatterScale = lerp(1, 0.84 + noise * 0.22, speakWaveStrength);
+        const particleRadius =
+          Math.max(0.9, 1.25 + reactiveLevel * 0.95) * ttsRadiusScale * ttsScatterScale;
+        const alphaBase = 0.18 + 0.68 * (1 - (z2 * 0.5 + 0.5));
+        const alphaJitter = lerp(1, 0.68 + noise * 0.45, speakWaveStrength);
+        const alpha = alphaBase * alphaJitter;
         const hue = 0;
         const sat = 0;
         const light = 72 + reactiveLevel * 18;
