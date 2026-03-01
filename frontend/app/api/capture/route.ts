@@ -59,32 +59,40 @@ Component: ${extracted.component || component || "Unknown"}
 Conditions: ${extracted.conditions || conditions || "Standard"}
 Knowledge: ${extracted.knowledge || transcript}`;
 
-        // 3. Store in both threads simultaneously (aircraft + technician)
-        const storePromises: Promise<any>[] = [];
+        // 3. Fire-and-forget: store in background, don't block the response
+        const storeInBackground = async () => {
+            const storePromises: Promise<any>[] = [];
 
-        if (tail) {
-            try {
-                const aircraftThreadId = resolveThreadId(tail);
-                storePromises.push(
-                    sendMessage(aircraftThreadId, memoryMessage, "Auto")
-                );
-            } catch {
-                console.warn(`[capture] No Backboard thread for aircraft: ${tail}`);
+            if (tail) {
+                try {
+                    const aircraftThreadId = resolveThreadId(tail);
+                    storePromises.push(
+                        sendMessage(aircraftThreadId, memoryMessage, "Auto")
+                    );
+                } catch {
+                    console.warn(`[capture] No Backboard thread for aircraft: ${tail}`);
+                }
             }
-        }
 
-        if (technician) {
-            try {
-                const techThreadId = resolveThreadId(technician);
-                storePromises.push(
-                    sendMessage(techThreadId, memoryMessage, "Auto")
-                );
-            } catch {
-                console.warn(`[capture] No Backboard thread for technician: ${technician}`);
+            if (technician) {
+                try {
+                    const techThreadId = resolveThreadId(technician);
+                    storePromises.push(
+                        sendMessage(techThreadId, memoryMessage, "Auto")
+                    );
+                } catch {
+                    console.warn(`[capture] No Backboard thread for technician: ${technician}`);
+                }
             }
-        }
 
-        await Promise.allSettled(storePromises);
+            const results = await Promise.allSettled(storePromises);
+            for (const r of results) {
+                if (r.status === "rejected") {
+                    console.error("[capture] Background store failed:", r.reason);
+                }
+            }
+        };
+        void storeInBackground();
 
         return NextResponse.json({
             confirmation: `Knowledge captured from ${technician || "unknown"} for ${tail || "unknown"}. Linked to ${extracted.component || component || "unknown"}, ${extracted.conditions || conditions || "standard"} conditions. Accessible to all certified technicians on this airframe.`,

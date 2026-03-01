@@ -60,20 +60,18 @@ Action taken: ${extracted.action_taken || "None"}
 Status: ${extracted.status || "monitoring"}
 Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
-        // 3. Store in aircraft thread (memory=Auto)
-        let interventionCount = 0;
-
+        // 3. Fire-and-forget: store in background, don't block the response
         try {
             const threadId = resolveThreadId(tail || "default");
-            await sendMessage(threadId, logMessage, "Auto");
-            interventionCount = await countMessages(threadId);
+            void sendMessage(threadId, logMessage, "Auto").catch((err) => {
+                console.error("[log] Background store failed:", err);
+            });
         } catch (err) {
             console.warn(`[log] Could not resolve thread for ${tail}:`, err);
         }
 
         return NextResponse.json({
-            confirmation: `Logged. ${tail || "Aircraft"} memory updated. ${interventionCount} intervention${interventionCount !== 1 ? "s" : ""} on record.`,
-            intervention_count: interventionCount,
+            confirmation: `Logged. ${tail || "Aircraft"} memory updated.`,
         });
     } catch (error) {
         console.error("[/api/log] Error:", error);

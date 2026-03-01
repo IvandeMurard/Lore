@@ -136,27 +136,36 @@ Component: ${extracted.component || component || "Unknown"}
 Conditions: ${extracted.conditions || "Standard"}
 Knowledge: ${extracted.knowledge || transcript}`;
 
-    const storePromises: Promise<any>[] = [];
+    // Fire-and-forget: store in background, don't block the response
+    const storeInBackground = async () => {
+        const storePromises: Promise<any>[] = [];
 
-    if (tail) {
-        try {
-            const aircraftThreadId = resolveThreadId(tail);
-            storePromises.push(sendMessage(aircraftThreadId, memoryMessage, "Auto"));
-        } catch {
-            console.warn(`[orchestrate/capture] No thread for aircraft: ${tail}`);
+        if (tail) {
+            try {
+                const aircraftThreadId = resolveThreadId(tail);
+                storePromises.push(sendMessage(aircraftThreadId, memoryMessage, "Auto"));
+            } catch {
+                console.warn(`[orchestrate/capture] No thread for aircraft: ${tail}`);
+            }
         }
-    }
 
-    if (technician && technician !== "Unknown") {
-        try {
-            const techThreadId = resolveThreadId(technician);
-            storePromises.push(sendMessage(techThreadId, memoryMessage, "Auto"));
-        } catch {
-            console.warn(`[orchestrate/capture] No thread for technician: ${technician}`);
+        if (technician && technician !== "Unknown") {
+            try {
+                const techThreadId = resolveThreadId(technician);
+                storePromises.push(sendMessage(techThreadId, memoryMessage, "Auto"));
+            } catch {
+                console.warn(`[orchestrate/capture] No thread for technician: ${technician}`);
+            }
         }
-    }
 
-    await Promise.allSettled(storePromises);
+        const results = await Promise.allSettled(storePromises);
+        for (const r of results) {
+            if (r.status === "rejected") {
+                console.error("[orchestrate/capture] Background store failed:", r.reason);
+            }
+        }
+    };
+    void storeInBackground();
 
     const confirmation = `Knowledge captured from ${technician} for ${tail || "unknown"}. Linked to ${extracted.component || component || "unknown"}, ${extracted.conditions || "standard"} conditions. Accessible to all certified technicians on this airframe.`;
 
@@ -227,28 +236,24 @@ Action taken: ${extracted.action_taken || "None"}
 Status: ${extracted.status || "monitoring"}
 Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
-    let interventionCount = 0;
-
+    // Fire-and-forget: store in background, don't block the response
     try {
         const threadId = resolveThreadId(tail || "default");
-        await sendMessage(threadId, logMessage, "Auto");
-        interventionCount = await countMessages(threadId);
+        void sendMessage(threadId, logMessage, "Auto").catch((err) => {
+            console.error("[orchestrate/log] Background store failed:", err);
+        });
     } catch (err) {
         console.warn(`[orchestrate/log] Could not resolve thread for ${tail}:`, err);
     }
 
-    const confirmation = `Logged. ${tail || "Aircraft"} memory updated. ${interventionCount} intervention${interventionCount !== 1 ? "s" : ""} on record.`;
+    const confirmation = `Logged. ${tail || "Aircraft"} memory updated.`;
 
     return {
         response: confirmation,
-        intervention_count: interventionCount,
         sources: [
             {
                 type: "history",
-                label:
-                    interventionCount > 0
-                        ? `${tail || "Aircraft"} history (${interventionCount})`
-                        : `${tail || "Aircraft"} history`,
+                label: `${tail || "Aircraft"} history`,
             },
         ],
     };
