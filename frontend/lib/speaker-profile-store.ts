@@ -25,9 +25,19 @@ type StoreShape = {
     profiles: Record<string, TeacherSpeakerProfile>;
 };
 
-export const DEFAULT_TEACHER_KEY = "marc-delaunay";
-const DEFAULT_DISPLAY_NAME = "Marc Delaunay";
-const DEFAULT_STORE_RELATIVE = "frontend/data/speaker-profiles.local.json";
+export const DEFAULT_TEACHER_KEY = "primary-expert";
+const DEFAULT_DISPLAY_NAME = "Primary Expert";
+const DEFAULT_STORE_FILE = "speaker-profiles.local.json";
+const LEGACY_STORE_RELATIVE = "frontend/data/speaker-profiles.local.json";
+
+function getDefaultStorePath(): string {
+    const cwd = process.cwd();
+    const cwdBase = path.basename(cwd).toLowerCase();
+    if (cwdBase === "frontend") {
+        return path.resolve(cwd, "data", DEFAULT_STORE_FILE);
+    }
+    return path.resolve(cwd, "frontend", "data", DEFAULT_STORE_FILE);
+}
 
 function getStorePath(): string {
     const overridePath = (process.env.SPEAKER_PROFILE_STORE_PATH ?? "").trim();
@@ -36,21 +46,34 @@ function getStorePath(): string {
             ? overridePath
             : path.resolve(process.cwd(), overridePath);
     }
-    return path.resolve(process.cwd(), DEFAULT_STORE_RELATIVE);
+    return getDefaultStorePath();
+}
+
+function getLegacyStorePath(): string {
+    return path.resolve(process.cwd(), LEGACY_STORE_RELATIVE);
 }
 
 async function readStore(): Promise<StoreShape> {
-    const filePath = getStorePath();
-    try {
-        const raw = await readFile(filePath, "utf8");
-        const parsed = JSON.parse(raw) as Partial<StoreShape>;
-        if (parsed.version === 1 && parsed.profiles && typeof parsed.profiles === "object") {
-            return { version: 1, profiles: parsed.profiles as Record<string, TeacherSpeakerProfile> };
-        }
-        return { version: 1, profiles: {} };
-    } catch {
-        return { version: 1, profiles: {} };
+    const primaryPath = getStorePath();
+    const candidatePaths = [primaryPath];
+    const legacyPath = getLegacyStorePath();
+    if (legacyPath !== primaryPath) {
+        candidatePaths.push(legacyPath);
     }
+
+    for (const filePath of candidatePaths) {
+        try {
+            const raw = await readFile(filePath, "utf8");
+            const parsed = JSON.parse(raw) as Partial<StoreShape>;
+            if (parsed.version === 1 && parsed.profiles && typeof parsed.profiles === "object") {
+                return { version: 1, profiles: parsed.profiles as Record<string, TeacherSpeakerProfile> };
+            }
+            return { version: 1, profiles: {} };
+        } catch {
+            // try next candidate path
+        }
+    }
+    return { version: 1, profiles: {} };
 }
 
 async function writeStore(store: StoreShape): Promise<void> {

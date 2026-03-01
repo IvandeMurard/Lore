@@ -1,6 +1,6 @@
-export const TTS_MAX_CHARS = 240;
-export const TTS_MAX_WORDS = 55;
-export const TTS_MAX_SENTENCES = 2;
+export const TTS_MAX_CHARS = 320;
+export const TTS_MAX_WORDS = 75;
+export const TTS_MAX_SENTENCES = 3;
 
 export function buildSpokenTtsText(text: string): string {
     const normalized = text.replace(/\s+/g, " ").trim();

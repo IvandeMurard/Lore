@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
     assessCaptureTranscript,
+    buildCaptureProbingQuestion,
     buildCaptureResponsePayload,
     buildFallbackSopDraft,
     buildSopKnowledgeInput,
@@ -78,6 +79,7 @@ test("buildCaptureResponsePayload keeps SOP fields on degraded persistence", asy
         tailCode: "F-GKXA",
         componentName: "fan section",
         conditionsValue: "cold weather",
+        probingQuestion: "What early sign confirms this pattern before escalation?",
         sopGenerated: false,
         sopDraft: fallback,
         sopDraftMarkdown: "## Draft SOP\n\n**Disclaimer:** Always verify the AMM procedure before intervening.",
@@ -102,6 +104,29 @@ test("buildCaptureResponsePayload keeps SOP fields on degraded persistence", asy
     assert.equal(payload.error, "Capture received but could not be persisted to Backboard.");
     assert.equal(payload.sop_draft_markdown, "## Draft SOP\n\n**Disclaimer:** Always verify the AMM procedure before intervening.");
     assert.equal(payload.retryable, true);
+});
+
+test("buildCaptureProbingQuestion prefers model-provided question when present", async () => {
+    const question = buildCaptureProbingQuestion({
+        transcript: "I check N1 vibration trend before deciding.",
+        componentName: "fan section",
+        conditionsValue: "cold weather",
+        modelQuestion: "Which threshold makes you escalate immediately",
+    });
+
+    assert.equal(question, "Which threshold makes you escalate immediately?");
+});
+
+test("buildCaptureProbingQuestion falls back to SOP-gap probe when SOP gap missing", async () => {
+    const question = buildCaptureProbingQuestion({
+        transcript: "I inspect by feel and by sound during startup.",
+        componentName: "fan section",
+        conditionsValue: "cold weather",
+        sopGap: "",
+        failureMode: "Unexpected rise in vibration",
+    });
+
+    assert.match(question.toLowerCase(), /sop/);
 });
 
 test("assessCaptureTranscript rejects low-signal non-actionable capture", async () => {

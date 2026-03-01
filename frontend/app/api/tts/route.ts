@@ -9,10 +9,13 @@ interface TtsRequestBody {
   text?: string;
   voice?: string;
   model?: string;
+  truncate?: boolean;
   format?: "mp3" | "wav" | "opus" | "aac" | "flac" | "pcm";
   // Backward compatibility with prior Speechmatics payload shape.
   output_format?: "wav_16000" | "pcm_16000";
 }
+
+const TTS_HARD_MAX_CHARS = 1800;
 
 function toOpenAiFormat(body: TtsRequestBody): "mp3" | "wav" | "opus" | "aac" | "flac" | "pcm" {
   if (body.format) return body.format;
@@ -78,7 +81,13 @@ export async function POST(request: Request) {
     const totalStart = nowMs();
     const body = (await request.json()) as TtsRequestBody;
     const incomingText = String(body.text ?? "").trim();
-    const text = buildSpokenTtsText(incomingText);
+    const normalizedInput = incomingText.replace(/\s+/g, " ").trim();
+    const boundedInput = normalizedInput.length > TTS_HARD_MAX_CHARS
+      ? `${normalizedInput.slice(0, TTS_HARD_MAX_CHARS).trim()}...`
+      : normalizedInput;
+    const text = body.truncate === false
+      ? boundedInput
+      : buildSpokenTtsText(boundedInput);
 
     if (!text) {
       return NextResponse.json({ error: "text is required" }, { status: 400 });

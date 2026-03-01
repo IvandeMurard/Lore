@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+    buildConversationalQueryMessage,
     getLatestGeneratedSopDraftSource,
     getBackboardErrorMessage,
     getBackboardStatusCode,
     isBackboardTransientError,
-    resolveThreadId,
+    resolveOrCreateThreadId,
     sendQueryMessage,
 } from "@/lib/backboard";
-import { ensureAmmDisclaimer } from "@/lib/safety";
+import { ensureAmmDisclaimer, shouldAppendAmmDisclaimer } from "@/lib/safety";
 
 /**
  * POST /api/query
@@ -34,41 +35,36 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // Resolve aircraft thread
-        let threadId: string;
-        try {
-            threadId = resolveThreadId(tail || "default");
-        } catch {
+        if (!tail || !String(tail).trim()) {
             return NextResponse.json(
-                {
-                    error: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.`,
-                    retryable: false,
-                    degraded: true,
-                },
+                { error: "tail is required. Run setup and provide a valid asset identifier." },
                 { status: 400 }
             );
         }
 
+        const tailCode = String(tail).trim().toUpperCase();
+
+        // Resolve or create aircraft thread on demand for newly configured spaces.
+        const threadId = await resolveOrCreateThreadId(tailCode);
+
         // Query the aircraft thread — Backboard handles RAG + memory retrieval
-        const question = tail
-            ? `[Aircraft: ${tail}] ${transcript}`
-            : transcript;
+        const question = buildConversationalQueryMessage(transcript, tailCode);
 
         const { response, message_id } = await sendQueryMessage(threadId, question);
-        const safeResponse = ensureAmmDisclaimer(response);
+        const safeResponse = shouldAppendAmmDisclaimer(transcript)
+            ? ensureAmmDisclaimer(response)
+            : response.trim();
         const latestGeneratedSopDraft = await getLatestGeneratedSopDraftSource(threadId);
 
         // Build sources list
         const sources: Array<{ type: string; label: string; details?: string }> = [];
-        if (tail) {
-            sources.push({
-                type: "history",
-                label: `${tail} memory`,
-                details:
-                    `Retrieved from the ${tail} aircraft thread in Backboard. ` +
-                    "Includes prior interventions, observations, and maintenance context.",
-            });
-        }
+        sources.push({
+            type: "history",
+            label: `${tailCode} memory`,
+            details:
+                `Retrieved from the ${tailCode} aircraft thread in Backboard. ` +
+                "Includes prior interventions, observations, and maintenance context.",
+        });
         sources.push({
             type: "sop",
             label: "SOP documents (RAG)",

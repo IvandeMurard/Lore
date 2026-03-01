@@ -9,6 +9,7 @@ interface HoldToSpeakButtonProps {
   onStart: () => void;
   onEnd: () => void;
   isRecording: boolean;
+  interactionMode?: "hold" | "toggle";
   disabled?: boolean;
   className?: string;
 }
@@ -17,6 +18,7 @@ export function HoldToSpeakButton({
   onStart,
   onEnd,
   isRecording,
+  interactionMode = "hold",
   disabled,
   className,
 }: HoldToSpeakButtonProps) {
@@ -25,6 +27,9 @@ export function HoldToSpeakButton({
   const isPressingRef = React.useRef(false);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (interactionMode === "toggle") {
+      return;
+    }
     if (disabled || isPressingRef.current) return;
     e.preventDefault();
     isPressingRef.current = true;
@@ -34,6 +39,9 @@ export function HoldToSpeakButton({
   };
 
   const endPress = (e: React.PointerEvent) => {
+    if (interactionMode === "toggle") {
+      return;
+    }
     const activePointerId = activePointerIdRef.current;
     if (!isPressingRef.current || activePointerId === null) return;
     if (activePointerId !== e.pointerId) return;
@@ -50,6 +58,15 @@ export function HoldToSpeakButton({
     }
   };
 
+  const handleClick = () => {
+    if (interactionMode !== "toggle" || disabled) return;
+    if (isRecording) {
+      onEnd();
+    } else {
+      onStart();
+    }
+  };
+
   return (
     <Button
       ref={buttonRef}
@@ -61,6 +78,7 @@ export function HoldToSpeakButton({
         isRecording && "scale-110 ring-4 ring-primary/40",
         className
       )}
+      onClick={handleClick}
       onPointerDown={handlePointerDown}
       onPointerUp={endPress}
       onPointerCancel={endPress}

@@ -5,7 +5,7 @@ import {
     getBackboardErrorMessage,
     isBackboardTransientError,
     persistMessages,
-    resolveThreadId,
+    resolveThreadIdFlexible,
 } from "@/lib/backboard";
 import { LOG_PROMPT } from "@/lib/prompts";
 
@@ -29,10 +29,17 @@ export async function POST(req: NextRequest) {
                 { status: 400 }
             );
         }
+        if (!tail || !String(tail).trim()) {
+            return NextResponse.json(
+                { error: "tail is required. Run setup and provide a valid asset identifier." },
+                { status: 400 }
+            );
+        }
+        const tailCode = String(tail).trim().toUpperCase();
 
         // 1. LLM extracts structured log entry
         const logContext = `Technician: ${technician || "Unknown"}
-Aircraft: ${tail || "Unknown"}
+Aircraft: ${tailCode}
 
 Transcript:
 "${transcript}"`;
@@ -59,14 +66,14 @@ Transcript:
         // 2. Build structured log message for Backboard memory
         const logMessage = `[INTERVENTION LOG — ${new Date().toISOString().split("T")[0]}]
 Technician: ${technician || "Unknown"}
-Aircraft: ${tail || "Unknown"}
+Aircraft: ${tailCode}
 Component: ${extracted.component || "Unknown"}
 Observation: ${extracted.findings || extracted.description || transcript}
 Action taken: ${extracted.action_taken || "None"}
 Status: ${extracted.status || "monitoring"}
 Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
-        const tailKey = tail || "default";
+        const tailKey = tailCode;
         const persistence = await persistMessages([
             {
                 key: tailKey,
@@ -79,7 +86,7 @@ Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
         if (!persistence.stored) {
             return NextResponse.json(
                 {
-                    error: `Log received but could not be persisted for ${tail || "aircraft"}.`,
+                    error: `Log received but could not be persisted for ${tailCode}.`,
                     confirmation: "No memory update completed.",
                     ...persistence,
                     retryable,
@@ -90,14 +97,14 @@ Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
         let intervention_count: number | null = null;
         try {
-            const threadId = resolveThreadId(tailKey);
+            const threadId = await resolveThreadIdFlexible(tailKey);
             intervention_count = await countMessages(threadId);
         } catch {
             intervention_count = null;
         }
 
         return NextResponse.json({
-            confirmation: `Logged. ${tail || "Aircraft"} memory updated.`,
+            confirmation: `Logged. ${tailCode} memory updated.`,
             intervention_count,
             ...persistence,
             retryable,

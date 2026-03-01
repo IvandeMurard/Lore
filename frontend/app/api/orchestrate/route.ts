@@ -2,18 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { classifyIntent } from "@/lib/llm";
 import { chatCompletion } from "@/lib/openai";
 import {
+    buildConversationalQueryMessage,
     countMessages,
     getLatestGeneratedSopDraftSource,
     getBackboardErrorMessage,
     getBackboardStatusCode,
     isBackboardTransientError,
     persistMessages,
-    resolveThreadId,
+    resolveOrCreateThreadId,
     sendQueryMessage,
     type PersistTarget,
 } from "@/lib/backboard";
+import { buildCaptureProbingQuestion } from "@/lib/capture-sop";
 import { ELICITATION_PROMPT, LOG_PROMPT } from "@/lib/prompts";
-import { ensureAmmDisclaimer } from "@/lib/safety";
+import { ensureAmmDisclaimer, shouldAppendAmmDisclaimer } from "@/lib/safety";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
@@ -57,6 +59,17 @@ type OrchestrateResult = {
     retryable?: boolean;
 };
 
+type ExtractedCapture = {
+    knowledge?: string;
+    component?: string;
+    conditions?: string;
+    confidence?: number;
+    sop_gap?: string;
+    teaching_tip?: string;
+    failure_mode?: string;
+    follow_up_question?: string;
+};
+
 function countSignalWords(transcript: string): number {
     const words = transcript
         .toLowerCase()
@@ -65,6 +78,10 @@ function countSignalWords(transcript: string): number {
         .map((w) => w.trim())
         .filter(Boolean);
     return words.filter((word) => !FILLER_WORDS.has(word)).length;
+}
+
+function asString(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
 }
 
 /**
@@ -90,13 +107,16 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        const technicianName = asString(technician) || "Unknown";
+        const normalizedTail = asString(tail).toUpperCase() || null;
+
         const signalWords = countSignalWords(transcript);
         if (signalWords < MIN_SIGNAL_WORDS) {
             return NextResponse.json(
                 {
                     intent: "query",
                     confidence: 0,
-                    aircraft: tail || null,
+                    aircraft: normalizedTail,
                     component: null,
                     response: ensureAmmDisclaimer(
                         "I did not store that because the transcript was too short or unclear. Please repeat with a specific maintenance statement or question."
@@ -120,7 +140,8 @@ export async function POST(req: NextRequest) {
         const classification = await classifyIntent(transcript);
         const intent = classification.intent as Intent;
         const confidence = classification.confidence ?? 0;
-        const detectedAircraft = classification.aircraft || tail || null;
+        const detectedAircraft =
+            normalizedTail || (asString(classification.aircraft).toUpperCase() || null);
         const detectedComponent = classification.component || null;
 
         if (
@@ -166,7 +187,7 @@ export async function POST(req: NextRequest) {
             case "capture":
                 result = await handleCapture(
                     transcript,
-                    technician || "Unknown",
+                    technicianName,
                     detectedAircraft,
                     detectedComponent
                 );
@@ -176,7 +197,7 @@ export async function POST(req: NextRequest) {
                 result = await handleLog(
                     transcript,
                     detectedAircraft,
-                    technician || "Unknown"
+                    technicianName
                 );
                 break;
 
@@ -288,9 +309,9 @@ Transcript:
         { temperature: 0.1 }
     );
 
-    let extracted;
+    let extracted: ExtractedCapture;
     try {
-        extracted = JSON.parse(extractedRaw);
+        extracted = (JSON.parse(extractedRaw) as ExtractedCapture) ?? {};
     } catch {
         extracted = {
             knowledge: transcript,
@@ -300,16 +321,27 @@ Transcript:
         };
     }
 
-    const sopGap = extracted.sop_gap || "";
-    const teachingTip = extracted.teaching_tip || "";
-    const failureMode = extracted.failure_mode || "";
+    const resolvedComponent = asString(extracted.component) || component || "Unknown";
+    const resolvedConditions = asString(extracted.conditions) || "Standard";
+    const sopGap = asString(extracted.sop_gap);
+    const teachingTip = asString(extracted.teaching_tip);
+    const failureMode = asString(extracted.failure_mode);
+    const probingQuestion = buildCaptureProbingQuestion({
+        transcript,
+        componentName: resolvedComponent,
+        conditionsValue: resolvedConditions,
+        sopGap,
+        teachingTip,
+        failureMode,
+        modelQuestion: asString(extracted.follow_up_question),
+    });
 
     const memoryMessage = `[ORAL KNOWLEDGE — ${new Date().toISOString().split("T")[0]}]
 Technician: ${technician}
 Aircraft: ${tail || "Unknown"}
-Component: ${extracted.component || component || "Unknown"}
-Conditions: ${extracted.conditions || "Standard"}
-Knowledge: ${extracted.knowledge || transcript}${sopGap ? `\nSOP Gap: ${sopGap}` : ""}${teachingTip ? `\nTeaching Tip: ${teachingTip}` : ""}${failureMode ? `\nFailure Mode: ${failureMode}` : ""}`;
+Component: ${resolvedComponent}
+Conditions: ${resolvedConditions}
+Knowledge: ${asString(extracted.knowledge) || transcript}${sopGap ? `\nSOP Gap: ${sopGap}` : ""}${teachingTip ? `\nTeaching Tip: ${teachingTip}` : ""}${failureMode ? `\nFailure Mode: ${failureMode}` : ""}`;
 
     const targets: PersistTarget[] = [];
     if (tail) {
@@ -350,7 +382,7 @@ Knowledge: ${extracted.knowledge || transcript}${sopGap ? `\nSOP Gap: ${sopGap}`
         console.error("[orchestrate/capture] Background persist error:", err);
     });
 
-    const confirmation = `Knowledge captured from ${technician} for ${tail || "unknown"}. Linked to ${extracted.component || component || "unknown"}, ${extracted.conditions || "standard"} conditions. Accessible to all certified technicians on this airframe.`;
+    const confirmation = `Knowledge captured from ${technician} for ${tail || "unknown"}. Linked to ${resolvedComponent}, ${resolvedConditions} conditions. Added to the project knowledge memory. ${probingQuestion}`;
 
     return {
         response: confirmation,
@@ -376,23 +408,21 @@ async function handleQuery(
     transcript: string,
     tail: string | null
 ): Promise<OrchestrateResult> {
-    let threadId: string;
-    try {
-        threadId = resolveThreadId(tail || "default");
-    } catch {
+    if (!tail) {
         return {
             status: 400,
-            error: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.`,
-            response: ensureAmmDisclaimer(
-                `No Backboard thread configured for aircraft: ${tail}.`
-            ),
+            error: "No asset configured for this query. Complete setup first.",
+            response:
+                "I need an asset configured before I can answer from project memory. Please complete setup with your asset and SOP content first.",
+            sources: [{ type: "system", label: "asset setup required" }],
             degraded: true,
             retryable: false,
-            sources: [{ type: "system", label: "thread not configured" }],
         };
     }
 
-    const question = tail ? `[Aircraft: ${tail}] ${transcript}` : transcript;
+    const threadId = await resolveOrCreateThreadId(tail);
+
+    const question = buildConversationalQueryMessage(transcript, tail);
     let response: string;
     let message_id: string;
     try {
@@ -447,7 +477,9 @@ async function handleQuery(
     });
 
     return {
-        response: ensureAmmDisclaimer(response),
+        response: shouldAppendAmmDisclaimer(transcript)
+            ? ensureAmmDisclaimer(response)
+            : response.trim(),
         sources,
         message_id,
         degraded: false,
@@ -461,8 +493,19 @@ async function handleLog(
     tail: string | null,
     technician: string
 ): Promise<OrchestrateResult> {
+    if (!tail) {
+        return {
+            status: 400,
+            error: "No asset configured for this log. Complete setup first.",
+            response: "I need an asset identifier before I can log this intervention.",
+            sources: [{ type: "system", label: "asset setup required" }],
+            degraded: true,
+            retryable: false,
+        };
+    }
+
     const logContext = `Technician: ${technician}
-Aircraft: ${tail || "Unknown"}
+Aircraft: ${tail}
 
 Transcript:
 "${transcript}"`;
@@ -486,14 +529,14 @@ Transcript:
 
     const logMessage = `[INTERVENTION LOG — ${new Date().toISOString().split("T")[0]}]
 Technician: ${technician}
-Aircraft: ${tail || "Unknown"}
+Aircraft: ${tail}
 Component: ${extracted.component || "Unknown"}
 Observation: ${extracted.findings || extracted.description || transcript}
 Action taken: ${extracted.action_taken || "None"}
 Status: ${extracted.status || "monitoring"}
 Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
-    const tailKey = tail || "default";
+    const tailKey = tail;
 
     // Fire-and-forget: persist in background, return response immediately for TTS
     void persistMessages([
@@ -510,7 +553,7 @@ Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
         console.error("[orchestrate/log] Background persist error:", err);
     });
 
-    const confirmation = `Logged. ${tail || "Aircraft"} memory updated.`;
+    const confirmation = `Logged. ${tail} memory updated.`;
 
     return {
         response: confirmation,
@@ -521,7 +564,7 @@ Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
         sources: [
             {
                 type: "history",
-                label: `${tail || "Aircraft"} history`,
+                label: `${tail} history`,
                 details: logMessage,
             },
         ],

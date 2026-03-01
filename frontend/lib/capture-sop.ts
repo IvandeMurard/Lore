@@ -35,6 +35,7 @@ type CapturePayloadParams = {
     tailCode: string;
     componentName: string;
     conditionsValue: string;
+    probingQuestion: string;
     sopGenerated: boolean;
     sopDraft: SOPDraft;
     sopDraftMarkdown: string;
@@ -263,6 +264,54 @@ function expectedResultForInstruction(instruction: string): string {
         return "Abnormal findings are escalated to authorized maintenance authority.";
     }
     return "Inspection outcome is verified and documented for traceability.";
+}
+
+function normalizeQuestion(value: string): string {
+    const trimmed = cleanWhitespace(value);
+    if (!trimmed) return "";
+    if (/[?]$/.test(trimmed)) return trimmed;
+    return `${trimmed}?`;
+}
+
+export function buildCaptureProbingQuestion(params: {
+    transcript: string;
+    componentName: string;
+    conditionsValue: string;
+    sopGap?: string | null;
+    teachingTip?: string | null;
+    failureMode?: string | null;
+    modelQuestion?: string | null;
+}): string {
+    const modelQuestion = normalizeQuestion(asString(params.modelQuestion));
+    if (modelQuestion) {
+        return modelQuestion;
+    }
+
+    const lower = `${params.transcript} ${params.componentName} ${params.conditionsValue}`.toLowerCase();
+    const hasSensoryCue = /\b(sound|noise|hear|feel|touch|visual|see|smell|vibration|temperature|pressure)\b/.test(lower);
+
+    if (!asString(params.sopGap)) {
+        return "For project memory, where does your field method differ from SOP, and why is that safer in this situation?";
+    }
+
+    if (!asString(params.failureMode)) {
+        return "For project memory, what exact early failure signal tells you to stop and escalate immediately?";
+    }
+
+    if (!hasSensoryCue) {
+        return "For project memory, what exact visual, sound, or feel cue should a junior check first on this task?";
+    }
+
+    const conditions = asString(params.conditionsValue).toLowerCase();
+    if (!conditions || conditions === "standard" || conditions === "unknown") {
+        return "For project memory, under which operating conditions does this pattern become critical for decision-making?";
+    }
+
+    if (!asString(params.teachingTip)) {
+        return "For project memory, what one teaching tip helps a junior avoid the most common mistake on this intervention?";
+    }
+
+    return "For project memory, what final verification check should a junior perform before closing this intervention?";
 }
 
 function buildProcedureStepsFromKnowledge(knowledge: string): SOPProcedureStep[] {
@@ -498,6 +547,7 @@ export function buildCaptureResponsePayload({
     tailCode,
     componentName,
     conditionsValue,
+    probingQuestion,
     sopGenerated,
     sopDraft,
     sopDraftMarkdown,
@@ -512,7 +562,7 @@ export function buildCaptureResponsePayload({
         target.endsWith(":sop-draft")
     );
     const payload = {
-        confirmation: `Knowledge captured from ${technicianName || "unknown"} for ${tailCode || "unknown"}. Linked to ${componentName || "unknown"}, ${conditionsValue || "standard"} conditions. Accessible to all certified technicians on this airframe.`,
+        confirmation: `Knowledge captured from ${technicianName || "unknown"} for ${tailCode || "unknown"}. Linked to ${componentName || "unknown"} under ${conditionsValue || "standard"} conditions. Added to the project knowledge memory. ${probingQuestion}`,
         validated: false,
         validation_note:
             "Pending review by certified technical authority before activation in production.",

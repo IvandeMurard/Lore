@@ -8,7 +8,7 @@ import { ResponsePanel, type LoreSource } from "@/components/response-panel";
 import { ParticleSphere } from "@/components/particle-sphere";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { buildSpokenTtsText } from "@/lib/tts";
+import { SetupScreen, type OrgConfig } from "@/components/setup-screen";
 
 interface SpeechmaticsResult {
   type?: string;
@@ -60,14 +60,23 @@ interface SpeakerFilterPayload {
   reason?: string;
 }
 
+interface PlayTtsOptions {
+  truncate?: boolean;
+  onEnded?: () => void;
+}
+
 const RT_MAX_DELAY_SEC = 3;
 const RT_STOP_WAIT_PADDING_MS = 1200;
-const TEACHER_KEY = "marc-delaunay";
-const TEACHER_DISPLAY_NAME = "Marc Delaunay";
+const TEACHER_KEY = "primary-expert";
+const TEACHER_DISPLAY_NAME = "Primary Expert";
 const TEACHER_MIN_WORDS = 6;
 const TEACHER_MIN_RATIO = 0.25;
 const DIARIZATION_MAX_SPEAKERS = 4;
 const DIARIZATION_SPEAKER_SENSITIVITY = 0.6;
+const HANDSFREE_SILENCE_MS = 1400;
+const HANDSFREE_NO_SPEECH_MS = 6000;
+const HANDSFREE_MAX_TURN_MS = 18000;
+const HANDSFREE_ACTIVITY_LEVEL = 0.14;
 
 function parseServerTiming(header: string | null): Record<string, number> {
   if (!header) return {};
@@ -222,6 +231,8 @@ export default function LorePage() {
   const [sttSpeakerMode, setSttSpeakerMode] = useState<SpeakerFilterMode>("no_profile");
   const [sttSpeakerReason, setSttSpeakerReason] = useState<string | undefined>(undefined);
   const [captureScope, setCaptureScope] = useState<CaptureScope>("teacher_only");
+  const [conversationLoopEnabled, setConversationLoopEnabled] = useState(true);
+  const [orgConfig, setOrgConfig] = useState<OrgConfig | null | undefined>(undefined);
 
   const meterAnimationRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -249,6 +260,57 @@ export default function LorePage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recorderChunksRef = useRef<BlobPart[]>([]);
   const realtimeAvailableRef = useRef(false);
+  const handsFreeMonitorRef = useRef<number | null>(null);
+  const lastSpeechActivityAtRef = useRef(0);
+  const speechDetectedRef = useRef(false);
+  const modeRef = useRef<LoreMode>("auto");
+  const isRecordingRef = useRef(false);
+  const isLoadingRef = useRef(false);
+  const isEnrollingTeacherRef = useRef(false);
+  const isTtsPlayingRef = useRef(false);
+  const conversationLoopEnabledRef = useRef(true);
+  const conversationCycleRef = useRef(0);
+  const startCaptureHandlerRef = useRef<(() => Promise<void>) | null>(null);
+  const endCaptureHandlerRef = useRef<(() => Promise<void>) | null>(null);
+  const startQueryHandlerRef = useRef<(() => Promise<void>) | null>(null);
+  const endQueryHandlerRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
+
+  useEffect(() => {
+    isEnrollingTeacherRef.current = isEnrollingTeacher;
+  }, [isEnrollingTeacher]);
+
+  useEffect(() => {
+    isTtsPlayingRef.current = isTtsPlaying;
+  }, [isTtsPlaying]);
+
+  useEffect(() => {
+    conversationLoopEnabledRef.current = conversationLoopEnabled;
+  }, [conversationLoopEnabled]);
+
+  const clearHandsFreeMonitor = useCallback(() => {
+    if (handsFreeMonitorRef.current !== null) {
+      window.clearInterval(handsFreeMonitorRef.current);
+      handsFreeMonitorRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!conversationLoopEnabled || (mode !== "capture" && mode !== "query")) {
+      clearHandsFreeMonitor();
+    }
+  }, [clearHandsFreeMonitor, conversationLoopEnabled, mode]);
 
   const stopVoiceMeter = useCallback(() => {
     meterSessionRef.current += 1;
@@ -275,9 +337,13 @@ export default function LorePage() {
     }
 
     setVoiceLevel(0);
+    speechDetectedRef.current = false;
+    lastSpeechActivityAtRef.current = 0;
   }, []);
 
   const stopResponseAudio = useCallback(() => {
+    clearHandsFreeMonitor();
+    isTtsPlayingRef.current = false;
     setIsTtsPlaying(false);
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
@@ -294,10 +360,10 @@ export default function LorePage() {
       URL.revokeObjectURL(audioUrl);
       responseAudioUrlRef.current = null;
     }
-  }, []);
+  }, [clearHandsFreeMonitor]);
 
   const playTtsResponse = useCallback(
-    async (text: string) => {
+    async (text: string, options?: PlayTtsOptions) => {
       const cleanText = text.trim().replace(/\s+/g, " ");
       if (!cleanText) return;
 
@@ -307,7 +373,10 @@ export default function LorePage() {
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: cleanText }),
+        body: JSON.stringify({
+          text: cleanText,
+          truncate: options?.truncate ?? true,
+        }),
       });
       const tAfterFetch = performance.now();
 
@@ -350,7 +419,8 @@ export default function LorePage() {
 
       console.log("[tts] response-ready", timingSnapshot);
 
-      const clearAudioRefs = () => {
+      const clearAudioRefs = (triggerEndedCallback: boolean) => {
+        isTtsPlayingRef.current = false;
         setIsTtsPlaying(false);
         if (responseAudioRef.current === audio) {
           responseAudioRef.current = null;
@@ -359,12 +429,21 @@ export default function LorePage() {
           URL.revokeObjectURL(audioUrl);
           responseAudioUrlRef.current = null;
         }
+        if (triggerEndedCallback) {
+          options?.onEnded?.();
+        }
       };
 
-      audio.onplay = () => setIsTtsPlaying(true);
-      audio.onpause = () => setIsTtsPlaying(false);
-      audio.onended = clearAudioRefs;
-      audio.onerror = clearAudioRefs;
+      audio.onplay = () => {
+        isTtsPlayingRef.current = true;
+        setIsTtsPlaying(true);
+      };
+      audio.onpause = () => {
+        isTtsPlayingRef.current = false;
+        setIsTtsPlaying(false);
+      };
+      audio.onended = () => clearAudioRefs(true);
+      audio.onerror = () => clearAudioRefs(false);
 
       try {
         await audio.play();
@@ -384,6 +463,97 @@ export default function LorePage() {
       }
     },
     [stopResponseAudio]
+  );
+
+  const armHandsFreeAutoEnd = useCallback(
+    (targetMode: "capture" | "query", cycle: number) => {
+      const endHandler =
+        targetMode === "capture" ? endCaptureHandlerRef.current : endQueryHandlerRef.current;
+      if (!endHandler) return;
+      if (!isRecordingRef.current) return;
+
+      const startedAt = Date.now();
+      clearHandsFreeMonitor();
+
+      handsFreeMonitorRef.current = window.setInterval(() => {
+        if (conversationCycleRef.current !== cycle) {
+          clearHandsFreeMonitor();
+          return;
+        }
+        if (!conversationLoopEnabledRef.current || modeRef.current !== targetMode) {
+          clearHandsFreeMonitor();
+          return;
+        }
+        if (!isRecordingRef.current) {
+          clearHandsFreeMonitor();
+          return;
+        }
+
+        const now = Date.now();
+        const elapsed = now - startedAt;
+        const silenceElapsed = now - Math.max(lastSpeechActivityAtRef.current, startedAt);
+        const noSpeechTimeout =
+          !speechDetectedRef.current && elapsed >= HANDSFREE_NO_SPEECH_MS;
+        const silenceTimeout =
+          speechDetectedRef.current && silenceElapsed >= HANDSFREE_SILENCE_MS;
+        const hardTimeout = elapsed >= HANDSFREE_MAX_TURN_MS;
+
+        if (noSpeechTimeout || silenceTimeout || hardTimeout) {
+          clearHandsFreeMonitor();
+          shouldRecordRef.current = false;
+          void endHandler();
+        }
+      }, 180);
+    },
+    [clearHandsFreeMonitor]
+  );
+
+  const maybeStartHandsFreeLoop = useCallback((targetMode: "capture" | "query") => {
+    if (!conversationLoopEnabledRef.current) return;
+    if (modeRef.current !== targetMode) return;
+    if (
+      isLoadingRef.current ||
+      isRecordingRef.current ||
+      isEnrollingTeacherRef.current ||
+      isTtsPlayingRef.current
+    ) {
+      return;
+    }
+
+    const cycle = conversationCycleRef.current;
+    const startHandler =
+      targetMode === "capture" ? startCaptureHandlerRef.current : startQueryHandlerRef.current;
+
+    if (!startHandler) return;
+
+    speechDetectedRef.current = false;
+    lastSpeechActivityAtRef.current = Date.now();
+
+    void startHandler().then(() => {
+      if (conversationCycleRef.current !== cycle) return;
+      armHandsFreeAutoEnd(targetMode, cycle);
+    }).catch((error) => {
+      console.error(`Failed to auto-start ${targetMode} follow-up turn:`, error);
+      clearHandsFreeMonitor();
+    });
+  }, [armHandsFreeAutoEnd, clearHandsFreeMonitor]);
+
+  const playConversationalTurn = useCallback(
+    (text: string, targetMode: "capture" | "query") => {
+      conversationCycleRef.current += 1;
+      const cycle = conversationCycleRef.current;
+
+      void playTtsResponse(text, {
+        truncate: false,
+        onEnded: () => {
+          if (conversationCycleRef.current !== cycle) return;
+          maybeStartHandsFreeLoop(targetMode);
+        },
+      }).catch((error) => {
+        console.error(`TTS failed for ${targetMode}:`, error);
+      });
+    },
+    [maybeStartHandsFreeLoop, playTtsResponse]
   );
 
   const speakInstantFeedback = useCallback(
@@ -475,6 +645,10 @@ export default function LorePage() {
         const rawLevel = Math.max(0, (rms - noiseFloor) * preGain);
         const compressedLevel = rawLevel / (1 + rawLevel * compression);
         const nextLevel = Math.min(1, compressedLevel * 1.22);
+        if (nextLevel > HANDSFREE_ACTIVITY_LEVEL) {
+          lastSpeechActivityAtRef.current = Date.now();
+          speechDetectedRef.current = true;
+        }
         setVoiceLevel((prev) => {
           const smoothing = nextLevel > prev ? 0.16 : 0.1;
           return prev + (nextLevel - prev) * smoothing;
@@ -857,6 +1031,30 @@ export default function LorePage() {
             }, 6000);
 
             ws.onopen = () => {
+              const setupAssetId = orgConfig?.assetId?.trim().toUpperCase();
+              const setupAssetTokens = setupAssetId
+                ? setupAssetId.split(/[-\s]+/).filter(Boolean)
+                : [];
+              const setupAssetSpelling = setupAssetTokens.join(" ");
+              const additionalVocab: Array<{ content: string; sounds_like?: string[] }> = [
+                { content: "CFM56", sounds_like: ["CFM 56", "CFM fifty-six"] },
+                { content: "CFM56-5B", sounds_like: ["CFM 56 5B", "CFM fifty-six five B"] },
+                { content: "N1", sounds_like: ["N one", "en one"] },
+                { content: "N2", sounds_like: ["N two", "en two"] },
+                { content: "borescope", sounds_like: ["bore scope"] },
+                { content: "AMM", sounds_like: ["A M M"] },
+                { content: "SOP", sounds_like: ["S O P", "standard operating procedure"] },
+                { content: "EASA", sounds_like: ["E A S A"] },
+                { content: "Lore" },
+                { content: "Airbus A320", sounds_like: ["A 320", "airbus 320", "airbus A three twenty"] },
+              ];
+              if (setupAssetId) {
+                additionalVocab.push({
+                  content: setupAssetId,
+                  sounds_like: setupAssetSpelling ? [setupAssetSpelling] : undefined,
+                });
+              }
+
               const startRecognitionPayload: Record<string, unknown> = {
                 message: "StartRecognition",
                 audio_format: {
@@ -873,19 +1071,7 @@ export default function LorePage() {
                   punctuation_overrides: {
                     permitted_marks: [".", ",", "?"],
                   },
-                  additional_vocab: [
-                    { content: "CFM56", sounds_like: ["CFM 56", "CFM fifty-six"] },
-                    { content: "CFM56-5B", sounds_like: ["CFM 56 5B", "CFM fifty-six five B"] },
-                    { content: "F-GKXA", sounds_like: ["foxtrot golf kilo x-ray alpha", "F G K X A"] },
-                    { content: "N1", sounds_like: ["N one", "en one"] },
-                    { content: "N2", sounds_like: ["N two", "en two"] },
-                    { content: "borescope", sounds_like: ["bore scope"] },
-                    { content: "AMM", sounds_like: ["A M M"] },
-                    { content: "SOP", sounds_like: ["S O P", "standard operating procedure"] },
-                    { content: "EASA", sounds_like: ["E A S A"] },
-                    { content: "Lore" },
-                    { content: "Airbus A320", sounds_like: ["A 320", "airbus 320", "airbus A three twenty"] },
-                  ],
+                  additional_vocab: additionalVocab,
                 },
               };
 
@@ -951,7 +1137,7 @@ export default function LorePage() {
 
       throw lastError ?? new Error("Unable to connect to Speechmatics realtime.");
     },
-    []
+    [orgConfig?.assetId]
   );
 
   const attachRealtimeHandlers = useCallback((socket: WebSocket, sessionId: number) => {
@@ -972,11 +1158,16 @@ export default function LorePage() {
       const teacherLabel = inferredTeacherSpeakerLabelRef.current;
 
       if (data.message === "AddPartialTranscript") {
-        realtimePartialRef.current = getTranscriptFragment(data);
+        const partialFragment = getTranscriptFragment(data);
+        realtimePartialRef.current = partialFragment;
         realtimeTeacherPartialRef.current =
           useTeacherDiarization && teacherLabel
             ? getTranscriptFragment(data, teacherLabel)
             : "";
+        if (partialFragment.trim()) {
+          speechDetectedRef.current = true;
+          lastSpeechActivityAtRef.current = Date.now();
+        }
         setTranscript(mergeTranscript(realtimeFinalRef.current, realtimePartialRef.current));
         return;
       }
@@ -990,6 +1181,10 @@ export default function LorePage() {
         realtimeFinalRef.current = mergeTranscript(realtimeFinalRef.current, fragment);
         if (teacherFragment) {
           realtimeTeacherFinalRef.current = mergeTranscript(realtimeTeacherFinalRef.current, teacherFragment);
+        }
+        if (fragment.trim()) {
+          speechDetectedRef.current = true;
+          lastSpeechActivityAtRef.current = Date.now();
         }
         realtimePartialRef.current = "";
         realtimeTeacherPartialRef.current = "";
@@ -1353,6 +1548,8 @@ export default function LorePage() {
   const startSpeechCaptureSession = useCallback(
     async (modeLabel: LoreMode) => {
       currentRealtimeModeRef.current = modeLabel;
+      speechDetectedRef.current = false;
+      lastSpeechActivityAtRef.current = Date.now();
       if (modeLabel === "capture") {
         if (captureScope === "full_conversation") {
           currentSpeakerProfileRef.current = null;
@@ -1413,6 +1610,7 @@ export default function LorePage() {
 
   const handleStartCapture = useCallback(async () => {
     if (isRecording || isLoading || isEnrollingTeacher) return;
+    clearHandsFreeMonitor();
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -1441,6 +1639,7 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    clearHandsFreeMonitor,
     isEnrollingTeacher,
     isLoading,
     isRecording,
@@ -1454,6 +1653,7 @@ export default function LorePage() {
 
   const handleEndCapture = useCallback(async () => {
     if (!isRecording) return;
+    clearHandsFreeMonitor();
     shouldRecordRef.current = false;
     setIsRecording(false);
 
@@ -1489,8 +1689,8 @@ export default function LorePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: finalTranscript,
-          technician: "Marc Delaunay",
-          tail: "F-GKXA",
+          technician: orgConfig?.expertName?.trim() || "Unknown",
+          tail: orgConfig?.assetId?.trim() || null,
           speaker_filter: speakerFilter,
         }),
       });
@@ -1518,7 +1718,7 @@ export default function LorePage() {
             details: `Reason: ${data.capture_rejection_reason || "capture_not_actionable"}\n\nTranscript:\n${finalTranscript}`,
           },
         ]);
-        void playTtsResponse(confirmation).catch((error) => {
+        void playTtsResponse(confirmation, { truncate: false }).catch((error) => {
           console.error("TTS failed for capture:", error);
         });
         return;
@@ -1581,7 +1781,8 @@ export default function LorePage() {
           setResponse(sopMarkdown);
           setSources(captureSources);
           void playTtsResponse(
-            "Captured information. SOP drafted successfully, but persistence failed. Please retry."
+            "Captured information. SOP drafted successfully, but persistence failed. Please retry.",
+            { truncate: false }
           ).catch((error) => {
             console.error("TTS failed for capture:", error);
           });
@@ -1592,10 +1793,7 @@ export default function LorePage() {
 
       setResponse(sopMarkdown || confirmation);
       setSources(captureSources);
-
-      void playTtsResponse(confirmation).catch((error) => {
-        console.error("TTS failed for capture:", error);
-      });
+      playConversationalTurn(confirmation, "capture");
     } catch (error) {
       console.error("Capture failed:", error);
       stopVoiceMeter();
@@ -1605,10 +1803,11 @@ export default function LorePage() {
       setIsLoading(false);
       setLoadingMessage("Thinking…");
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, speakInstantFeedback, stopVoiceMeter]);
+  }, [clearHandsFreeMonitor, isRecording, playConversationalTurn, playTtsResponse, resolveFinalTranscript, speakInstantFeedback, stopVoiceMeter]);
 
   const handleStartQuery = useCallback(async () => {
     if (isRecording || isLoading || isEnrollingTeacher) return;
+    clearHandsFreeMonitor();
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -1620,6 +1819,9 @@ export default function LorePage() {
 
     try {
       await startSpeechCaptureSession("query");
+      if (conversationLoopEnabledRef.current && modeRef.current === "query") {
+        armHandsFreeAutoEnd("query", conversationCycleRef.current);
+      }
     } catch (error) {
       console.error("Failed to start query recording:", error);
       setIsRecording(false);
@@ -1630,6 +1832,8 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    armHandsFreeAutoEnd,
+    clearHandsFreeMonitor,
     isEnrollingTeacher,
     isLoading,
     isRecording,
@@ -1641,6 +1845,7 @@ export default function LorePage() {
 
   const handleEndQuery = useCallback(async () => {
     if (!isRecording) return;
+    clearHandsFreeMonitor();
     shouldRecordRef.current = false;
     setIsRecording(false);
 
@@ -1656,13 +1861,17 @@ export default function LorePage() {
       setIsLoading(true);
       setResponse("");
       setSources([]);
+      const tail = orgConfig?.assetId?.trim();
+      if (!tail) {
+        throw new Error("No asset is configured. Complete setup first.");
+      }
 
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: finalTranscript,
-          tail: "F-GKXA",
+          tail,
         }),
       });
 
@@ -1677,9 +1886,7 @@ export default function LorePage() {
       if (data.sources && Array.isArray(data.sources)) {
         setSources(data.sources);
       }
-      void playTtsResponse(buildSpokenTtsText(answer)).catch((error) => {
-        console.error("TTS failed for query:", error);
-      });
+      playConversationalTurn(answer, "query");
     } catch (error) {
       console.error("Query failed:", error);
       stopVoiceMeter();
@@ -1688,10 +1895,18 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+  }, [clearHandsFreeMonitor, isRecording, orgConfig?.assetId, playConversationalTurn, resolveFinalTranscript, stopVoiceMeter]);
+
+  useEffect(() => {
+    startCaptureHandlerRef.current = handleStartCapture;
+    endCaptureHandlerRef.current = handleEndCapture;
+    startQueryHandlerRef.current = handleStartQuery;
+    endQueryHandlerRef.current = handleEndQuery;
+  }, [handleEndCapture, handleEndQuery, handleStartCapture, handleStartQuery]);
 
   const handleStartLog = useCallback(async () => {
     if (isRecording || isLoading || isEnrollingTeacher) return;
+    clearHandsFreeMonitor();
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -1713,6 +1928,7 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    clearHandsFreeMonitor,
     isEnrollingTeacher,
     isLoading,
     isRecording,
@@ -1724,6 +1940,7 @@ export default function LorePage() {
 
   const handleEndLog = useCallback(async () => {
     if (!isRecording) return;
+    clearHandsFreeMonitor();
     shouldRecordRef.current = false;
     setIsRecording(false);
 
@@ -1740,14 +1957,17 @@ export default function LorePage() {
       setResponse("");
       setSources([]);
 
-      const tail = "F-GKXA";
+      const tail = orgConfig?.assetId?.trim();
+      if (!tail) {
+        throw new Error("No asset is configured. Complete setup first.");
+      }
       const res = await fetch("/api/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: finalTranscript,
           tail,
-          technician: "Marc Delaunay",
+          technician: orgConfig?.expertName?.trim() || "Unknown",
         }),
       });
 
@@ -1768,7 +1988,7 @@ export default function LorePage() {
           details: `Logged transcript:\n${finalTranscript}`,
         },
       ]);
-      void playTtsResponse(confirmation).catch((error) => {
+      void playTtsResponse(confirmation, { truncate: false }).catch((error) => {
         console.error("TTS failed for log:", error);
       });
     } catch (error) {
@@ -1779,11 +1999,12 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+  }, [clearHandsFreeMonitor, isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
 
   // ── Auto mode handlers ────────────────────────────
   const handleStartAuto = useCallback(async () => {
     if (isRecording || isLoading || isEnrollingTeacher) return;
+    clearHandsFreeMonitor();
     stopResponseAudio();
     shouldRecordRef.current = true;
     realtimeAvailableRef.current = false;
@@ -1805,6 +2026,7 @@ export default function LorePage() {
       setTranscript(`Transcription error: ${message}`);
     }
   }, [
+    clearHandsFreeMonitor,
     isEnrollingTeacher,
     isLoading,
     isRecording,
@@ -1816,6 +2038,7 @@ export default function LorePage() {
 
   const handleEndAuto = useCallback(async () => {
     if (!isRecording) return;
+    clearHandsFreeMonitor();
     shouldRecordRef.current = false;
     setIsRecording(false);
 
@@ -1837,8 +2060,8 @@ export default function LorePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: finalTranscript,
-          technician: "Marc Delaunay",
-          tail: "F-GKXA",
+          technician: orgConfig?.expertName?.trim() || "Unknown",
+          tail: orgConfig?.assetId?.trim() || null,
         }),
       });
 
@@ -1871,7 +2094,7 @@ export default function LorePage() {
       }
       setSources(autoSources);
 
-      void playTtsResponse(buildSpokenTtsText(answer)).catch((error) => {
+      void playTtsResponse(answer, { truncate: false }).catch((error) => {
         console.error("TTS failed for auto:", error);
       });
     } catch (error) {
@@ -1882,7 +2105,25 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+  }, [clearHandsFreeMonitor, isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("lore_org_config");
+      setOrgConfig(stored ? (JSON.parse(stored) as OrgConfig) : null);
+    } catch {
+      setOrgConfig(null);
+    }
+  }, []);
+
+  const handleSetupComplete = useCallback((config: OrgConfig) => {
+    try {
+      localStorage.setItem("lore_org_config", JSON.stringify(config));
+    } catch {
+      // ignore storage errors
+    }
+    setOrgConfig(config);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1914,14 +2155,15 @@ export default function LorePage() {
   useEffect(() => {
     return () => {
       shouldRecordRef.current = false;
+      clearHandsFreeMonitor();
       void stopRealtimeTranscription();
       void stopBackupRecorder();
       stopResponseAudio();
       stopVoiceMeter();
     };
-  }, [stopBackupRecorder, stopRealtimeTranscription, stopResponseAudio, stopVoiceMeter]);
+  }, [clearHandsFreeMonitor, stopBackupRecorder, stopRealtimeTranscription, stopResponseAudio, stopVoiceMeter]);
 
-  const onStart =
+  const onStartRaw =
     mode === "auto"
       ? handleStartAuto
       : mode === "capture"
@@ -1929,6 +2171,10 @@ export default function LorePage() {
         : mode === "query"
           ? handleStartQuery
           : handleStartLog;
+  const onStart = useCallback(() => {
+    conversationCycleRef.current += 1;
+    void onStartRaw();
+  }, [onStartRaw]);
   const onEnd =
     mode === "auto"
       ? handleEndAuto
@@ -1937,6 +2183,8 @@ export default function LorePage() {
         : mode === "query"
           ? handleEndQuery
           : handleEndLog;
+  const micInteractionMode =
+    mode === "query" && conversationLoopEnabled ? "toggle" : "hold";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1953,6 +2201,10 @@ export default function LorePage() {
         onEnd();
         return;
       }
+      if (isTtsPlaying) {
+        onStart();
+        return;
+      }
       if (!isLoading) {
         onStart();
       }
@@ -1962,19 +2214,58 @@ export default function LorePage() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [isEnrollingTeacher, isLoading, isRecording, onEnd, onStart]);
+  }, [isEnrollingTeacher, isLoading, isRecording, isTtsPlaying, onEnd, onStart]);
+
+  if (orgConfig === undefined) return null;
+  if (!orgConfig) {
+    return <SetupScreen onComplete={handleSetupComplete} />;
+  }
 
   return (
     <main className="min-h-screen flex flex-col bg-background text-foreground">
       <header className="border-b border-border px-4 py-3 flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Lore</h1>
-        <Badge variant="secondary" className="font-mono text-xs">
-          F-GKXA
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="font-mono text-xs">
+            {orgConfig.assetId}
+          </Badge>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground h-auto py-0.5 px-2"
+            onClick={() => {
+              try { localStorage.removeItem("lore_org_config"); } catch { /* ignore */ }
+              setOrgConfig(null);
+            }}
+          >
+            Change
+          </Button>
+        </div>
       </header>
 
       <div className="flex-1 container max-w-2xl mx-auto px-4 py-6 flex flex-col gap-6">
         <ModeToggle value={mode} onValueChange={setMode} />
+
+        {(mode === "capture" || mode === "query") && (
+          <div className="rounded-md border border-border bg-card/60 p-3 flex items-center justify-between gap-3">
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">Conversational Loop</span>
+              <span className="text-xs text-muted-foreground">
+                Lore reads full responses, then auto-listens and auto-sends after silence. You can interrupt anytime with the mic button or Space.
+              </span>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={conversationLoopEnabled ? "default" : "secondary"}
+              disabled={isRecording || isLoading || isEnrollingTeacher}
+              onClick={() => setConversationLoopEnabled((prev) => !prev)}
+            >
+              {conversationLoopEnabled ? "Auto listen ON" : "Auto listen OFF"}
+            </Button>
+          </div>
+        )}
 
         {mode === "capture" && (
           <div className="rounded-md border border-border bg-card/60 p-3 flex flex-col gap-2">
@@ -2053,10 +2344,15 @@ export default function LorePage() {
             onStart={onStart}
             onEnd={onEnd}
             isRecording={isRecording}
+            interactionMode={micInteractionMode}
             disabled={isLoading || isEnrollingTeacher}
           />
           <p className="text-xs text-muted-foreground text-center">
-            Hold to speak · Release to send · Press Space to toggle
+            {mode === "query" && conversationLoopEnabled
+              ? "Tap mic to start voice chat · Lore auto-listens turn by turn · Tap again or press Space to interrupt"
+              : mode === "capture" && conversationLoopEnabled
+                ? "Hold to speak first turn · Lore auto-listens after speaking · Hold mic or press Space to interrupt anytime"
+              : "Hold to speak · Release to send · Press Space to toggle"}
           </p>
         </div>
 

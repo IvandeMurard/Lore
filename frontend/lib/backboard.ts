@@ -1,4 +1,5 @@
 import { BackboardClient } from "backboard-sdk";
+import { getStoredThreadId, normalizeThreadKey, setStoredThreadId } from "@/lib/backboard-thread-store";
 
 const apiKey = process.env.BACKBOARD_API_KEY;
 const RETRY_BASE_DELAY_MS = 350;
@@ -72,6 +73,39 @@ export function resolveThreadId(key: string): string {
         );
     }
 
+    return threadId;
+}
+
+export async function resolveThreadIdFlexible(key: string): Promise<string> {
+    const stored = await getStoredThreadId(key);
+    if (stored) return stored;
+
+    try {
+        return resolveThreadId(key);
+    } catch {
+        throw new Error(
+            `No Backboard thread configured for key "${key}". Run setup or create the space again.`
+        );
+    }
+}
+
+export async function resolveOrCreateThreadId(key: string): Promise<string> {
+    try {
+        return await resolveThreadIdFlexible(key);
+    } catch {
+        const assistantId = getAssistantId();
+        const thread = await backboard.createThread(assistantId);
+        const threadId = thread.threadId;
+        await setStoredThreadId(key, threadId);
+        return threadId;
+    }
+}
+
+export async function createAndStoreThreadId(key: string): Promise<string> {
+    const assistantId = getAssistantId();
+    const thread = await backboard.createThread(assistantId);
+    const threadId = thread.threadId;
+    await setStoredThreadId(key, threadId);
     return threadId;
 }
 
@@ -214,11 +248,38 @@ export async function sendQueryMessage(
     return sendMessage(threadId, content, "ReadOnly", BACKBOARD_QUERY_POLICY);
 }
 
+export function buildConversationalQueryMessage(
+    transcript: string,
+    tail: string | null
+): string {
+    const normalizedTranscript = transcript.replace(/\s+/g, " ").trim();
+    const aircraftContext = tail?.trim() ? tail.trim() : "unknown";
+
+    return [
+        "[MODE: QUERY]",
+        "Response behavior:",
+        "- Keep an ongoing natural conversation with the learner; continue from previous turns and do not restart context.",
+        "- Default to short voice-friendly responses (2-5 sentences).",
+        "- Ask one brief follow-up question in most turns to keep the dialogue moving.",
+        "- If the learner asks about the Lore project/product, answer directly and end with one short follow-up question.",
+        "- If maintenance context is missing, ask one clarifying question before high-risk advice.",
+        "- For maintenance guidance, enforce SOP priority over oral/history context.",
+        "- Strict scope rule: use only knowledge for the current aircraft context below.",
+        "- If retrieved memory references a different aircraft/tail, ignore it and say no matching memory was found.",
+        "- Address the current learner as 'you'; do not assume any specific technician identity.",
+        "- Mention an expert name only when explicitly attributing retrieved oral knowledge.",
+        "- When maintenance guidance is given, place any follow-up question before the AMM closing sentence.",
+        "- If the learner asks for a final/no-follow-up answer, skip the question.",
+        `Aircraft context: ${aircraftContext}`,
+        `Learner message: ${normalizedTranscript}`,
+    ].join("\n");
+}
+
 export async function persistMessages(targets: PersistTarget[]): Promise<PersistResult> {
     const writes = await Promise.all(
         targets.map(async (target) => {
             try {
-                const threadId = resolveThreadId(target.key);
+                const threadId = await resolveOrCreateThreadId(target.key);
                 await sendMessage(threadId, target.content, target.memory ?? "Auto");
                 return { target: target.label, ok: true as const };
             } catch (error) {
@@ -332,6 +393,12 @@ export async function getLatestGeneratedSopDraftSource(
 export async function createThread(assistantId: string): Promise<string> {
     const thread = await backboard.createThread(assistantId);
     return thread.threadId;
+}
+
+export async function mapThreadToKey(key: string, threadId: string): Promise<void> {
+    const normalized = normalizeThreadKey(key);
+    if (!normalized) return;
+    await setStoredThreadId(normalized, threadId);
 }
 
 export async function createAssistant(

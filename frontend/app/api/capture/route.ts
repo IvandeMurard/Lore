@@ -8,6 +8,7 @@ import {
 } from "@/lib/backboard";
 import {
     assessCaptureTranscript,
+    buildCaptureProbingQuestion,
     buildCaptureResponsePayload,
     buildFallbackSopDraft,
     buildSopKnowledgeInput,
@@ -24,6 +25,7 @@ type ExtractedKnowledge = {
     sop_gap?: string;
     teaching_tip?: string;
     failure_mode?: string;
+    follow_up_question?: string;
 };
 
 type SpeakerFilterMetadata = {
@@ -193,6 +195,15 @@ Reason: ${asString(speaker_filter.reason) || "n/a"}`
         const sopGap = asString(extracted.sop_gap);
         const teachingTip = asString(extracted.teaching_tip);
         const failureMode = asString(extracted.failure_mode);
+        const probingQuestion = buildCaptureProbingQuestion({
+            transcript,
+            componentName,
+            conditionsValue,
+            sopGap,
+            teachingTip,
+            failureMode,
+            modelQuestion: asString(extracted.follow_up_question),
+        });
         const memoryMessage = `[ORAL KNOWLEDGE — ${new Date().toISOString().split("T")[0]}]
 ${speakerFilterHeader ? `${speakerFilterHeader}\n` : ""}Technician: ${technicianName}
 Aircraft: ${tailCode}
@@ -252,6 +263,7 @@ Knowledge: ${knowledgeText}${sopGap ? `\nSOP Gap: ${sopGap}` : ""}${teachingTip 
             tailCode,
             componentName,
             conditionsValue,
+            probingQuestion,
             sopGenerated,
             sopDraft,
             sopDraftMarkdown,
