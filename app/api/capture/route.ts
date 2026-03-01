@@ -91,7 +91,7 @@ Knowledge: ${extracted.knowledge || transcript}`;
     await Promise.allSettled(storePromises);
 
     return NextResponse.json({
-      confirmation: `Knowledge captured from ${technician || "unknown"} for ${tail || "unknown"}. Linked to ${extracted.component || component || "unknown"}, ${extracted.conditions || conditions || "standard"} conditions. Stored and pending expert review before activation for the team.`,
+      confirmation: `Got it, ${technician || "unknown"}. Linked to ${extracted.component || component || "unknown"} on ${tail || "unknown"}, ${extracted.conditions || conditions || "standard"} conditions. The team will have access to this.`,
       // Trust & Safety: knowledge is stored but flagged as pending expert review.
       // In production, a validation queue prevents unreviewed knowledge from being served.
       validated: false,
