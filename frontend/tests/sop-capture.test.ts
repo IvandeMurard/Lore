@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    assessCaptureTranscript,
     buildCaptureResponsePayload,
+    buildFallbackSopDraft,
+    buildSopKnowledgeInput,
     parseSopDraftOutput,
 } from "../lib/capture-sop";
 import { AMM_DISCLAIMER } from "../lib/safety";
@@ -99,4 +102,34 @@ test("buildCaptureResponsePayload keeps SOP fields on degraded persistence", asy
     assert.equal(payload.error, "Capture received but could not be persisted to Backboard.");
     assert.equal(payload.sop_draft_markdown, "## Draft SOP\n\n**Disclaimer:** Always verify the AMM procedure before intervening.");
     assert.equal(payload.retryable, true);
+});
+
+test("assessCaptureTranscript rejects low-signal non-actionable capture", async () => {
+    const result = assessCaptureTranscript("uh okay yes sure got it okay.");
+    assert.equal(result.accepted, false);
+    assert.ok(result.reason);
+});
+
+test("buildSopKnowledgeInput removes filler-heavy conversational noise", async () => {
+    const input = "Uh okay, we need to check blades before and after each flight. Okay sir, I'll do it.";
+    const distilled = buildSopKnowledgeInput(input, input);
+    assert.match(distilled.toLowerCase(), /check blades/);
+    assert.ok(!distilled.toLowerCase().includes("i'll do it"));
+});
+
+test("buildFallbackSopDraft derives actionable steps from meaningful guidance", async () => {
+    const draft = buildFallbackSopDraft({
+        transcript:
+            "Check blades before and after each flight and look for wear or cracks. Record findings and escalate abnormalities.",
+        technician: "Marc Delaunay",
+        tail: "F-GKXA",
+        component: "Unknown",
+        conditions: "Standard",
+        knowledge:
+            "Check blades before and after each flight and look for wear or cracks. Record findings and escalate abnormalities.",
+    });
+
+    assert.equal(draft.component, "blade section");
+    assert.ok(draft.procedure_steps.length >= 2);
+    assert.match(draft.procedure_steps[0].instruction.toLowerCase(), /blade|check|inspect/);
 });
