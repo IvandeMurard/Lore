@@ -852,12 +852,11 @@ export default function LorePage() {
         sop_generated?: boolean;
         sop_draft_markdown?: string;
         sop_generation_warning?: string | null;
+        degraded?: boolean;
+        retryable?: boolean;
       };
-      if (!res.ok) throw new Error(data.error || "Capture failed.");
-
       const confirmation = data.confirmation || "Knowledge captured.";
       const sopMarkdown = (data.sop_draft_markdown || "").trim();
-      setResponse(sopMarkdown || confirmation);
 
       const captureSources: LoreSource[] = [
         {
@@ -879,6 +878,29 @@ export default function LorePage() {
           details: data.sop_generation_warning,
         });
       }
+
+      if (!res.ok) {
+        if (sopMarkdown) {
+          captureSources.push({
+            type: "system",
+            label: "Capture persistence degraded",
+            details: `${data.error || "Capture persistence failed after SOP generation."}${
+              data.retryable ? "\n\nRetry recommended." : ""
+            }`,
+          });
+          setResponse(sopMarkdown);
+          setSources(captureSources);
+          void playTtsResponse(
+            "Captured information. SOP drafted successfully, but persistence failed. Please retry."
+          ).catch((error) => {
+            console.error("TTS failed for capture:", error);
+          });
+          return;
+        }
+        throw new Error(data.error || "Capture failed.");
+      }
+
+      setResponse(sopMarkdown || confirmation);
       setSources(captureSources);
 
       void playTtsResponse(confirmation).catch((error) => {

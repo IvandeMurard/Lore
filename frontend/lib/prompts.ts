@@ -1,3 +1,5 @@
+import { AMM_DISCLAIMER } from "@/lib/safety";
+
 // ─────────────────────────────────────────────
 // LORE — System Prompts
 // All LLM instructions live here.
@@ -133,7 +135,7 @@ Rules:
 - Keep each list item under 20 words.
 - procedure_steps must be sequential starting at 1.
 - The disclaimer must be exactly:
-"Always verify the AMM procedure before intervening."
+${JSON.stringify(AMM_DISCLAIMER)}
 
 Return ONLY valid JSON with this exact shape:
 {

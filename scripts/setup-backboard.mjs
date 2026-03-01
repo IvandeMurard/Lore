@@ -7,7 +7,7 @@ const DEFAULT_SYSTEM_PROMPT = [
     "Priority order is strict: SOP documents > oral knowledge > aircraft history.",
     "Never provide instructions that conflict with SOPs.",
     "Keep answers concise and operational for technicians.",
-    "Always end every advisory response with: Vérifie toujours la procédure AMM avant d'intervenir.",
+    "Always end every advisory response with: Always verify the AMM procedure before intervening.",
 ].join(" ");
 
 const ENV_KEY_ASSISTANT = "BACKBOARD_ASSISTANT_ID";
