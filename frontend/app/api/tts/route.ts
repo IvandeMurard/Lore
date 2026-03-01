@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import openai from "@/lib/openai";
+import { buildSpokenTtsText } from "@/lib/tts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,7 +77,8 @@ export async function POST(request: Request) {
   try {
     const totalStart = nowMs();
     const body = (await request.json()) as TtsRequestBody;
-    const text = String(body.text ?? "").trim();
+    const incomingText = String(body.text ?? "").trim();
+    const text = buildSpokenTtsText(incomingText);
 
     if (!text) {
       return NextResponse.json({ error: "text is required" }, { status: 400 });
@@ -110,6 +112,7 @@ export async function POST(request: Request) {
 
     console.log("[/api/tts] timing", {
       model: resolvedModel,
+      incomingTextLength: incomingText.length,
       textLength: text.length,
       audioBytes: audioBytes.byteLength,
       openaiCreateMs: Number(openaiCreateMs.toFixed(1)),
@@ -123,6 +126,7 @@ export async function POST(request: Request) {
         "Content-Type": contentTypeFor(format),
         "Cache-Control": "no-store",
         "X-TTS-Model": resolvedModel,
+        "X-TTS-Input-Text-Length": String(incomingText.length),
         "X-TTS-Text-Length": String(text.length),
         "X-TTS-Audio-Bytes": String(audioBytes.byteLength),
         "Server-Timing": [

@@ -1,11 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 import { classifyIntent } from "@/lib/llm";
 import { chatCompletion } from "@/lib/openai";
-import { sendMessage, countMessages, resolveThreadId } from "@/lib/backboard";
+import {
+    countMessages,
+    getBackboardErrorMessage,
+    isBackboardTransientError,
+    persistMessages,
+    resolveThreadId,
+    sendQueryMessage,
+    type PersistTarget,
+} from "@/lib/backboard";
 import { ELICITATION_PROMPT, LOG_PROMPT } from "@/lib/prompts";
+import { ensureAmmDisclaimer } from "@/lib/safety";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
+
+type Intent = "capture" | "query" | "log";
+
+type OrchestrateSource = {
+    type: "sop" | "oral" | "history" | "intent" | "system";
+    label: string;
+};
+
+type OrchestrateResult = {
+    status?: number;
+    error?: string;
+    response?: string;
+    sources?: OrchestrateSource[];
+    message_id?: string;
+    intervention_count?: number | null;
+    stored?: boolean;
+    stored_targets?: string[];
+    failed_targets?: Array<{ target: string; reason: string; retryable: boolean }>;
+    validated?: boolean;
+    validation_note?: string;
+    degraded?: boolean;
+    retryable?: boolean;
+};
 
 /**
  * POST /api/orchestrate
@@ -32,7 +64,7 @@ export async function POST(req: NextRequest) {
 
         // ── Step 1: Classify intent ──────────────────────
         const classification = await classifyIntent(transcript);
-        const intent = classification.intent as "capture" | "query" | "log";
+        const intent = classification.intent as Intent;
         const confidence = classification.confidence ?? 0;
         const detectedAircraft = classification.aircraft || tail || null;
         const detectedComponent = classification.component || null;
@@ -46,7 +78,7 @@ export async function POST(req: NextRequest) {
         });
 
         // ── Step 2: Route to handler ─────────────────────
-        let result;
+        let result: OrchestrateResult;
 
         switch (intent) {
             case "capture":
@@ -77,19 +109,34 @@ export async function POST(req: NextRequest) {
             totalMs: Date.now() - startMs,
         });
 
+        const status = result.status ?? 200;
         return NextResponse.json({
             intent,
             confidence,
             aircraft: detectedAircraft,
             component: detectedComponent,
             ...result,
-        });
+        }, { status });
     } catch (error) {
         console.error("[/api/orchestrate] Error:", error);
+
+        if (isBackboardTransientError(error)) {
+            return NextResponse.json(
+                {
+                    error: "Knowledge service is temporarily unavailable. Please try again.",
+                    retryable: true,
+                    degraded: true,
+                },
+                { status: 503 }
+            );
+        }
+
         return NextResponse.json(
             {
                 error: "Internal server error",
-                details: error instanceof Error ? error.message : String(error),
+                details: getBackboardErrorMessage(error),
+                retryable: false,
+                degraded: true,
             },
             { status: 500 }
         );
@@ -102,7 +149,7 @@ async function handleCapture(
     technician: string,
     tail: string | null,
     component: string | null
-) {
+): Promise<OrchestrateResult> {
     const extractionContext = `Technician: ${technician}
 Aircraft: ${tail || "Unknown"}
 Component: ${component || "Unknown"}
@@ -136,66 +183,116 @@ Component: ${extracted.component || component || "Unknown"}
 Conditions: ${extracted.conditions || "Standard"}
 Knowledge: ${extracted.knowledge || transcript}`;
 
-    // Fire-and-forget: store in background, don't block the response
-    const storeInBackground = async () => {
-        const storePromises: Promise<any>[] = [];
+    const targets: PersistTarget[] = [];
+    if (tail) {
+        targets.push({
+            key: tail,
+            label: `aircraft:${tail}`,
+            content: memoryMessage,
+        });
+    }
+    if (technician && technician !== "Unknown") {
+        targets.push({
+            key: technician,
+            label: `technician:${technician}`,
+            content: memoryMessage,
+        });
+    }
 
-        if (tail) {
-            try {
-                const aircraftThreadId = resolveThreadId(tail);
-                storePromises.push(sendMessage(aircraftThreadId, memoryMessage, "Auto"));
-            } catch {
-                console.warn(`[orchestrate/capture] No thread for aircraft: ${tail}`);
-            }
-        }
+    if (targets.length === 0) {
+        return {
+            status: 400,
+            error: "No capture targets configured for this input.",
+            response: "No capture target was provided.",
+            stored: false,
+            stored_targets: [],
+            failed_targets: [],
+            degraded: true,
+            retryable: false,
+            sources: [{ type: "system", label: "capture target missing" }],
+        };
+    }
 
-        if (technician && technician !== "Unknown") {
-            try {
-                const techThreadId = resolveThreadId(technician);
-                storePromises.push(sendMessage(techThreadId, memoryMessage, "Auto"));
-            } catch {
-                console.warn(`[orchestrate/capture] No thread for technician: ${technician}`);
-            }
+    // Fire-and-forget: persist in background, return response immediately for TTS
+    void persistMessages(targets).then((persistence) => {
+        if (!persistence.stored) {
+            console.error("[orchestrate/capture] Background persist failed:", persistence.failed_targets);
         }
-
-        const results = await Promise.allSettled(storePromises);
-        for (const r of results) {
-            if (r.status === "rejected") {
-                console.error("[orchestrate/capture] Background store failed:", r.reason);
-            }
-        }
-    };
-    void storeInBackground();
+    }).catch((err) => {
+        console.error("[orchestrate/capture] Background persist error:", err);
+    });
 
     const confirmation = `Knowledge captured from ${technician} for ${tail || "unknown"}. Linked to ${extracted.component || component || "unknown"}, ${extracted.conditions || "standard"} conditions. Accessible to all certified technicians on this airframe.`;
 
     return {
         response: confirmation,
         sources: [{ type: "oral", label: "Captured just now" }],
+        validated: false,
+        validation_note:
+            "Pending review by certified technical authority before activation in production.",
+        stored: true,
+        stored_targets: targets.map((t) => t.label),
+        failed_targets: [],
+        retryable: false,
     };
 }
 
 // ── Query handler ────────────────────────────────────
-async function handleQuery(transcript: string, tail: string | null) {
+async function handleQuery(
+    transcript: string,
+    tail: string | null
+): Promise<OrchestrateResult> {
     let threadId: string;
     try {
         threadId = resolveThreadId(tail || "default");
     } catch {
         return {
-            response: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.`,
-            sources: [],
+            status: 400,
+            error: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.`,
+            response: ensureAmmDisclaimer(
+                `No Backboard thread configured for aircraft: ${tail}.`
+            ),
+            degraded: true,
+            retryable: false,
+            sources: [{ type: "system", label: "thread not configured" }],
         };
     }
 
     const question = tail ? `[Aircraft: ${tail}] ${transcript}` : transcript;
-    const { response, message_id } = await sendMessage(threadId, question, "ReadOnly");
+    let response: string;
+    let message_id: string;
+    try {
+        const queryResult = await sendQueryMessage(threadId, question);
+        response = queryResult.response;
+        message_id = queryResult.message_id;
+    } catch (error) {
+        if (isBackboardTransientError(error)) {
+            return {
+                status: 503,
+                error: "Knowledge service is temporarily unavailable. Please try again in a few seconds.",
+                response: ensureAmmDisclaimer(
+                    "Knowledge service is temporarily unavailable. Please try again in a few seconds."
+                ),
+                retryable: true,
+                degraded: true,
+                sources: [{ type: "system", label: "knowledge service degraded" }],
+            };
+        }
+        throw error;
+    }
 
-    const sources: Array<{ type: string; label: string }> = [];
+    const sources: OrchestrateSource[] = [];
     if (tail) sources.push({ type: "history", label: `${tail} memory` });
     sources.push({ type: "sop", label: "SOP documents (RAG)" });
     sources.push({ type: "oral", label: "Senior oral knowledge" });
 
-    return { response, sources, message_id };
+    return {
+        response: ensureAmmDisclaimer(response),
+        sources,
+        message_id,
+        degraded: false,
+        retryable: false,
+    };
 }
 
 // ── Log handler ──────────────────────────────────────
@@ -203,7 +300,7 @@ async function handleLog(
     transcript: string,
     tail: string | null,
     technician: string
-) {
+): Promise<OrchestrateResult> {
     const logContext = `Technician: ${technician}
 Aircraft: ${tail || "Unknown"}
 
@@ -236,20 +333,31 @@ Action taken: ${extracted.action_taken || "None"}
 Status: ${extracted.status || "monitoring"}
 Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
-    // Fire-and-forget: store in background, don't block the response
-    try {
-        const threadId = resolveThreadId(tail || "default");
-        void sendMessage(threadId, logMessage, "Auto").catch((err) => {
-            console.error("[orchestrate/log] Background store failed:", err);
-        });
-    } catch (err) {
-        console.warn(`[orchestrate/log] Could not resolve thread for ${tail}:`, err);
-    }
+    const tailKey = tail || "default";
+
+    // Fire-and-forget: persist in background, return response immediately for TTS
+    void persistMessages([
+        {
+            key: tailKey,
+            label: `aircraft:${tailKey}`,
+            content: logMessage,
+        },
+    ]).then((persistence) => {
+        if (!persistence.stored) {
+            console.error("[orchestrate/log] Background persist failed:", persistence.failed_targets);
+        }
+    }).catch((err) => {
+        console.error("[orchestrate/log] Background persist error:", err);
+    });
 
     const confirmation = `Logged. ${tail || "Aircraft"} memory updated.`;
 
     return {
         response: confirmation,
+        stored: true,
+        stored_targets: [`aircraft:${tailKey}`],
+        failed_targets: [],
+        retryable: false,
         sources: [
             {
                 type: "history",

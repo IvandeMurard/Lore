@@ -1,18 +1,15 @@
 Title,Description,Priority,Status,Label,Assignee
-[SETUP] Initialize Next.js project,"Clone repo, npm install, confirm dev server runs. TypeScript + Tailwind configured.",Urgent,In Progress,Setup,El Houssain
-[SETUP] Configure API clients & env,"Create lib/ folder with typed clients for Speechmatics / OpenAI / Qdrant / ElevenLabs. Copy .env.example to .env.local, fill keys.",Urgent,Todo,Setup,El Houssain
-[SETUP] Deploy to Vercel (staging),"Connect GitHub repo to Vercel. Add all env vars. Get public URL for judges. Do early — not last minute.",High,Todo,Setup,El Houssain
-[VOICE] Browser audio recording,"Implement useAudioRecorder hook using MediaRecorder API. Start/stop on button hold. Output: audio blob (WebM). Test in Chrome.",Urgent,Todo,Voice,Timothé
-[VOICE] Speechmatics real-time STT,"Integrate Speechmatics RT transcription via WebSocket. Stream audio chunks. Accumulate transcript. Handle final vs partial events. Return transcript on silence.",Urgent,Todo,Voice,Timothé
-[VOICE] TTS voice output,"Integrate ElevenLabs TTS. Input: text string. Output: audio auto-played in browser. Test 3 voices, pick the best. Fallback: OpenAI TTS.",High,Todo,Voice,Timothé
-[VOICE] Waveform visualizer,"Animated waveform using Web Audio API AnalyserNode. Active during recording and TTS playback. Dark bg #0a0a0a, orange bars #f97316.",Low,Todo,UI,Soheil
-[MEMORY] Backboard setup — threads + RAG,"Create Backboard account (backboard.io). Get API key. Create threads: F-GKXA (aircraft), F-HBXA (aircraft), marc-delaunay (technician). Add BACKBOARD_API_KEY to .env.local and Vercel. Configure lib/backboard.ts.",Urgent,Todo,Memory,El Houssain
-[MEMORY] Capture endpoint POST /api/capture,"Input: transcript + technician + tail. Send to Backboard thread (technician) and thread (tail) with memory=Auto. Backboard extracts and stores facts automatically. Return confirmation.",Urgent,Todo,Memory,El Houssain
-[MEMORY] Query endpoint POST /api/query,"Input: transcript + tail. Query Backboard thread (tail) with memory=Auto + SOP docs as RAG context. LLM synthesis enforces SOP > oral > history. Return response + sources.",Urgent,Todo,Memory,El Houssain
-[MEMORY] Log endpoint POST /api/log,"Input: transcript + tail + technician. Send to Backboard thread (tail) with memory=Auto. Return confirmation.",High,Todo,Memory,El Houssain
-[AGENT] Orchestrator agent,"lib/orchestrator.ts — classifies intent from transcript: capture | query | log. Routes to correct endpoint. Built on LLM tool use.",High,Todo,Agentic,Timothé
-[AGENT] Elicitation agent (Capture mode),"lib/elicitation-agent.ts — after senior speaks, generates 1 targeted follow-up question. Re-records answer. Structures final knowledge object before upsert.",High,Todo,Agentic,Timothé
-[DATA] Mock SOP documents,"Create data/sops/cfm56-5b-72-21.txt (N1 vibration) and cfm56-5b-72-00.txt (fan inspection). 10-15 realistic-looking procedure entries each.",High,Todo,Demo Data,Daria
-[DATA] Seed Marc's oral knowledge via Backboard,"Create data/marc-knowledge.json with 6+ entries across 2 aircraft. Ivan sends each entry via POST /api/capture to populate Backboard threads. Confirm query endpoint returns Marc's note on F-GKXA N1 vibration query.",Urgent,Todo,Demo Data,Daria
-[UI] Main demo interface,"Two-mode UI: Capture (senior) / Query (junior). Hold-to-speak button. TranscriptPanel. ResponsePanel with source attribution. AircraftBadge (F-GKXA). Dark industrial aesthetic.",High,Todo,UI,Soheil
-[DEMO] End-to-end QA + rehearsal,"Run exact 3-min demo script 3 times. Document failures. Fix latency (target <3s). Prepare pre-recorded audio fallback. Confirm Vercel stable.",Urgent,Todo,Demo,Daria
+[SETUP] Frontend runtime only,"Keep root scripts as wrappers for frontend/ runtime. Remove legacy root app/lib paths.",Urgent,Todo,Setup,El Houssain
+[SETUP] Configure API clients & env,"Use frontend/.env.local as source of truth. Configure Speechmatics, OpenAI, Backboard keys.",Urgent,Todo,Setup,El Houssain
+[SETUP] Backboard bootstrap,"Run npm run setup-backboard and persist BACKBOARD_ASSISTANT_ID + BACKBOARD_THREAD_* vars.",Urgent,Todo,Setup,El Houssain
+[VOICE] Speechmatics real-time STT,"Realtime token mint + websocket failover + final/partial transcript handling.",Urgent,Todo,Voice,Timothé
+[VOICE] OpenAI TTS output,"Use OpenAI TTS with short spoken-response shaping for conversational latency.",High,Todo,Voice,Timothé
+[VOICE] Waveform visualizer,"Reactive mic/response visualizer while recording and while processing response.",Low,Todo,UI,Soheil
+[MEMORY] Capture endpoint persistence,"POST /api/capture must await writes and return stored/stored_targets/failed_targets.",Urgent,Todo,Memory,El Houssain
+[MEMORY] Query endpoint reliability,"POST /api/query should use shared retry policy and friendly 503 on transient outages.",Urgent,Todo,Memory,El Houssain
+[MEMORY] Log endpoint persistence,"POST /api/log must avoid fire-and-forget and expose explicit persistence status.",High,Todo,Memory,El Houssain
+[AGENT] Auto orchestrator parity,"POST /api/orchestrate should mirror query reliability metadata and persistence fields.",High,Todo,Agentic,Timothé
+[SAFETY] Mandatory AMM disclaimer,"All advisory responses end with fixed disclaimer in prompt and server guard.",Urgent,Todo,Safety,Ivan
+[DATA] Seed Marc knowledge,"Use data/marc-knowledge.json + npm run seed-backboard to pre-populate Backboard memory.",Urgent,Todo,Demo Data,Daria
+[UI] Main demo interface,"Auto/Capture/Query/Log with hold-to-speak, transcript panel, response sources, aircraft badge.",High,Todo,UI,Soheil
+[DEMO] Rehearsal smoke checks,"Run repeatable smoke checklist before demo: STT token, query, capture, log, TTS.",Urgent,Todo,Demo,Daria

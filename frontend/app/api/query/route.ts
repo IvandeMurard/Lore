@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sendMessage, resolveThreadId } from "@/lib/backboard";
-
-const QUERY_TIMEOUT_MS = 18000;
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    return Promise.race([
-        promise,
-        new Promise<T>((_, reject) => {
-            setTimeout(() => reject(new Error("Backboard query timed out.")), timeoutMs);
-        }),
-    ]);
-}
+import {
+    getBackboardErrorMessage,
+    isBackboardTransientError,
+    resolveThreadId,
+    sendQueryMessage,
+} from "@/lib/backboard";
+import { ensureAmmDisclaimer } from "@/lib/safety";
 
 /**
  * POST /api/query
@@ -43,7 +38,11 @@ export async function POST(req: NextRequest) {
             threadId = resolveThreadId(tail || "default");
         } catch {
             return NextResponse.json(
-                { error: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.` },
+                {
+                    error: `No Backboard thread configured for aircraft: ${tail}. Run npm run setup-backboard.`,
+                    retryable: false,
+                    degraded: true,
+                },
                 { status: 400 }
             );
         }
@@ -53,10 +52,8 @@ export async function POST(req: NextRequest) {
             ? `[Aircraft: ${tail}] ${transcript}`
             : transcript;
 
-        const { response, message_id } = await withTimeout(
-            sendMessage(threadId, question, "ReadOnly"),
-            QUERY_TIMEOUT_MS
-        );
+        const { response, message_id } = await sendQueryMessage(threadId, question);
+        const safeResponse = ensureAmmDisclaimer(response);
 
         // Build sources list
         const sources: Array<{ type: string; label: string }> = [];
@@ -65,33 +62,21 @@ export async function POST(req: NextRequest) {
         sources.push({ type: "oral", label: "Senior oral knowledge" });
 
         return NextResponse.json({
-            response,
+            response: safeResponse,
             sources,
             message_id,
+            degraded: false,
+            retryable: false,
         });
     } catch (error) {
-        const statusCode =
-            typeof error === "object" &&
-            error !== null &&
-            "statusCode" in error &&
-            typeof (error as { statusCode?: number }).statusCode === "number"
-                ? (error as { statusCode: number }).statusCode
-                : undefined;
-
-        const message =
-            error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-        const isTimeout = message.includes("timed out") || message.includes("timeout");
-
-        if (
-            isTimeout ||
-            statusCode === 429 ||
-            (typeof statusCode === "number" && statusCode >= 500)
-        ) {
+        if (isBackboardTransientError(error)) {
             console.warn("[/api/query] Backboard transient error:", error);
             return NextResponse.json(
                 {
                     error:
                         "Knowledge service is temporarily unavailable. Please try again in a few seconds.",
+                    retryable: true,
+                    degraded: true,
                 },
                 { status: 503 }
             );
@@ -99,7 +84,12 @@ export async function POST(req: NextRequest) {
 
         console.error("[/api/query] Error:", error);
         return NextResponse.json(
-            { error: "Internal server error", details: String(error) },
+            {
+                error: "Internal server error",
+                retryable: false,
+                degraded: true,
+                details: getBackboardErrorMessage(error),
+            },
             { status: 500 }
         );
     }

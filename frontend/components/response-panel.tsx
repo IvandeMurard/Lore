@@ -3,9 +3,10 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useMemo } from "react";
 
 export interface LoreSource {
-  type: "sop" | "oral" | "history";
+  type: "sop" | "oral" | "history" | "intent" | "system";
   label: string;
 }
 
@@ -16,12 +17,37 @@ interface ResponsePanelProps {
   className?: string;
 }
 
+/** Lightweight markdown → HTML for voice responses (no heavy deps). */
+function renderMarkdown(text: string): string {
+  return text
+    // bold **text** or __text__
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/__(.+?)__/g, "<strong>$1</strong>")
+    // italic *text* or _text_
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>")
+    // inline code `text`
+    .replace(/`(.+?)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-xs">$1</code>')
+    // unordered list items "- item" or "• item"
+    .replace(/^[\-•]\s+(.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+    // numbered list items "1. item"
+    .replace(/^\d+\.\s+(.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
+    // paragraphs: double newlines
+    .replace(/\n{2,}/g, '</p><p class="mt-2">')
+    // single newlines → <br>
+    .replace(/\n/g, "<br />");
+}
+
 export function ResponsePanel({
   response,
   sources = [],
   isLoading = false,
   className,
 }: ResponsePanelProps) {
+  const renderedHtml = useMemo(() => {
+    if (!response) return "";
+    return renderMarkdown(response);
+  }, [response]);
+
   return (
     <Card className={cn("border-border bg-card/80", className)}>
       <CardHeader className="pb-2">
@@ -35,9 +61,14 @@ export function ResponsePanel({
             <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
             <span className="text-sm">Thinking…</span>
           </div>
+        ) : response ? (
+          <div
+            className="min-h-[4rem] text-sm leading-relaxed text-foreground prose prose-invert prose-sm max-w-none"
+            dangerouslySetInnerHTML={{ __html: renderedHtml }}
+          />
         ) : (
           <p className="min-h-[4rem] text-sm leading-relaxed text-foreground">
-            {response || "Ask something to hear Lore’s answer."}
+            Ask something to hear Lore&apos;s answer.
           </p>
         )}
         {sources.length > 0 && (

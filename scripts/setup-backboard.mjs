@@ -7,12 +7,15 @@ const DEFAULT_SYSTEM_PROMPT = [
     "Priority order is strict: SOP documents > oral knowledge > aircraft history.",
     "Never provide instructions that conflict with SOPs.",
     "Keep answers concise and operational for technicians.",
+    "Always end every advisory response with: Vérifie toujours la procédure AMM avant d'intervenir.",
 ].join(" ");
 
 const ENV_KEY_ASSISTANT = "BACKBOARD_ASSISTANT_ID";
 const ENV_KEY_THREAD_F_GKXA = "BACKBOARD_THREAD_F_GKXA";
 const ENV_KEY_THREAD_F_HBXA = "BACKBOARD_THREAD_F_HBXA";
 const ENV_KEY_THREAD_MARC = "BACKBOARD_THREAD_MARC_DELAUNAY";
+const FRONTEND_ENV_PATH = "frontend/.env.local";
+const ROOT_ENV_PATH = ".env.local";
 
 function requireEnv(name) {
     const value = process.env[name];
@@ -61,7 +64,10 @@ async function ensureThread(client, assistantId, envKey) {
 }
 
 async function main() {
-    loadEnv({ path: ".env.local" });
+    // Runtime source of truth: frontend/.env.local
+    // Fallback for compatibility: root .env.local
+    loadEnv({ path: FRONTEND_ENV_PATH });
+    loadEnv({ path: ROOT_ENV_PATH });
 
     const apiKey = requireEnv("BACKBOARD_API_KEY");
 
@@ -81,7 +87,7 @@ async function main() {
     );
     const threadMarc = await ensureThread(client, assistantId, ENV_KEY_THREAD_MARC);
 
-    console.log("\nCopy these to .env.local and Vercel:\n");
+    console.log(`\nCopy these to ${FRONTEND_ENV_PATH} and Vercel:\n`);
     console.log(`${ENV_KEY_ASSISTANT}=${assistantId}`);
     console.log(`${ENV_KEY_THREAD_F_GKXA}=${threadFgkxa}`);
     console.log(`${ENV_KEY_THREAD_F_HBXA}=${threadFhbxa}`);

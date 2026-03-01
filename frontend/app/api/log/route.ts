@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { chatCompletion } from "@/lib/openai";
-import { sendMessage, countMessages, resolveThreadId } from "@/lib/backboard";
+import {
+    countMessages,
+    getBackboardErrorMessage,
+    isBackboardTransientError,
+    persistMessages,
+    resolveThreadId,
+} from "@/lib/backboard";
 import { LOG_PROMPT } from "@/lib/prompts";
 
 /**
@@ -60,23 +66,63 @@ Action taken: ${extracted.action_taken || "None"}
 Status: ${extracted.status || "monitoring"}
 Escalation required: ${extracted.escalation_required ? "YES" : "No"}`;
 
-        // 3. Fire-and-forget: store in background, don't block the response
+        const tailKey = tail || "default";
+        const persistence = await persistMessages([
+            {
+                key: tailKey,
+                label: `aircraft:${tailKey}`,
+                content: logMessage,
+            },
+        ]);
+        const retryable = persistence.failed_targets.some((f) => f.retryable);
+
+        if (!persistence.stored) {
+            return NextResponse.json(
+                {
+                    error: `Log received but could not be persisted for ${tail || "aircraft"}.`,
+                    confirmation: "No memory update completed.",
+                    ...persistence,
+                    retryable,
+                },
+                { status: retryable ? 503 : 500 }
+            );
+        }
+
+        let intervention_count: number | null = null;
         try {
-            const threadId = resolveThreadId(tail || "default");
-            void sendMessage(threadId, logMessage, "Auto").catch((err) => {
-                console.error("[log] Background store failed:", err);
-            });
-        } catch (err) {
-            console.warn(`[log] Could not resolve thread for ${tail}:`, err);
+            const threadId = resolveThreadId(tailKey);
+            intervention_count = await countMessages(threadId);
+        } catch {
+            intervention_count = null;
         }
 
         return NextResponse.json({
             confirmation: `Logged. ${tail || "Aircraft"} memory updated.`,
+            intervention_count,
+            ...persistence,
+            retryable,
         });
     } catch (error) {
         console.error("[/api/log] Error:", error);
+
+        if (isBackboardTransientError(error)) {
+            return NextResponse.json(
+                {
+                    error: "Log service is temporarily unavailable. Please retry.",
+                    retryable: true,
+                    degraded: true,
+                },
+                { status: 503 }
+            );
+        }
+
         return NextResponse.json(
-            { error: "Internal server error", details: String(error) },
+            {
+                error: "Internal server error",
+                details: getBackboardErrorMessage(error),
+                retryable: false,
+                degraded: true,
+            },
             { status: 500 }
         );
     }

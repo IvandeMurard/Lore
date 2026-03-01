@@ -2,7 +2,7 @@
  * LORE — Backboard Knowledge Seeder
  *
  * Seeds Marc's oral knowledge into Backboard threads via /api/capture.
- * Run AFTER setup-backboard.ts and AFTER the dev server is running.
+ * Run AFTER setup-backboard.mjs and AFTER the dev server is running.
  *
  * Usage:
  *   npm run dev        (in one terminal)

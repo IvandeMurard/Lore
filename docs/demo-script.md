@@ -16,6 +16,38 @@ curl -s http://localhost:3000/api/orchestrate \
 # Expected: "query"
 ```
 
+### Repeatable smoke checklist (run 3 times)
+```bash
+# 1) Speechmatics realtime token mint
+curl -s -X POST http://localhost:3000/api/speechmatics-token | jq .
+
+# 2) Auto mode query path
+curl -s -X POST http://localhost:3000/api/orchestrate \
+  -H "Content-Type: application/json" \
+  -d '{"transcript":"What do I know about N1 vibration on F-GKXA?","tail":"F-GKXA","technician":"Marc Delaunay"}' | jq .
+
+# 3) Capture persistence fields
+curl -s -X POST http://localhost:3000/api/capture \
+  -H "Content-Type: application/json" \
+  -d '{"transcript":"F-GKXA shows recurring low-frequency N1 harmonic pattern in cold weather under 8C.","tail":"F-GKXA","technician":"Marc Delaunay","component":"CFM56 fan section","conditions":"cold weather"}' | jq .
+
+# 4) Log persistence fields
+curl -s -X POST http://localhost:3000/api/log \
+  -H "Content-Type: application/json" \
+  -d '{"transcript":"Logging 2.4 N1 vibration at 6C, no escalation.","tail":"F-GKXA","technician":"Marc Delaunay"}' | jq .
+
+# 5) TTS endpoint timing + payload headers
+curl -s -D - -o /tmp/lore-tts.opus -X POST http://localhost:3000/api/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text":"According to SOP 72-21-00, monitor this trend. Always verify the AMM procedure before intervening."}' | sed -n '1,40p'
+```
+
+Expected outcome on all three runs:
+- No 500 responses
+- Query/orchestrate transient outages return 503 + `retryable: true`
+- Capture/log always include `stored`, `stored_targets`, `failed_targets`
+- Advisory responses end with `Always verify the AMM procedure before intervening.`
+
 ---
 
 ## [0:00 – 0:20] Narrative setup (presenter to jury)
@@ -50,8 +82,8 @@ curl -s http://localhost:3000/api/orchestrate \
 > "According to SOP 72-21-00, N1 vibration above 4 units requires escalation.
 > Marc Fontaine noted in October that F-GKXA specifically shows a harmonic
 > resonance between 2-3 units in cold conditions — below 8°C. It's a known
-> characteristic of this airframe, not a defect. Vérifie toujours la procédure
-> AMM avant d'intervenir."
+> characteristic of this airframe, not a defect. Always verify the AMM procedure
+> before intervening."
 
 **Sources shown:** SOP documents (RAG) · Senior oral knowledge · F-GKXA memory
 

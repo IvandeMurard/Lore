@@ -66,10 +66,9 @@ Lore:   "Logged. F-GKXA memory updated."
 | Layer | Technology |
 |-------|-----------|
 | Voice Input | Speechmatics (real-time STT, noise-robust) |
-| LLM | Claude 3.5 Sonnet / GPT-4o |
-| Memory | Qdrant (vector DB, episodic memory) |
-| RAG | LangChain / LlamaIndex on mock SOPs |
-| Voice Output | ElevenLabs / OpenAI TTS |
+| LLM | OpenAI GPT-4o |
+| Memory + RAG | Backboard (threads + document retrieval) |
+| Voice Output | OpenAI TTS (`gpt-4o-mini-tts`) |
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Deploy | Vercel |
 
@@ -97,10 +96,16 @@ Built in 24 hours by a team of 4.
 npm install
 
 # Configure environment
-cp .env.example .env.local
-# Fill in your API keys
+cp frontend/.env.example frontend/.env.local
+# Fill in API keys in frontend/.env.local
 
-# Run development server
+# Create/validate Backboard assistant + threads
+npm run setup-backboard
+
+# Optional: seed demo memory
+npm run seed-backboard
+
+# Run frontend dev server from root
 npm run dev
 ```
 

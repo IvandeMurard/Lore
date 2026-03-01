@@ -7,6 +7,7 @@ import { TranscriptPanel } from "@/components/transcript-panel";
 import { ResponsePanel, type LoreSource } from "@/components/response-panel";
 import { ParticleSphere } from "@/components/particle-sphere";
 import { Badge } from "@/components/ui/badge";
+import { buildSpokenTtsText } from "@/lib/tts";
 
 interface SpeechmaticsResult {
   type?: string;
@@ -76,41 +77,6 @@ function getTranscriptFragment(data: SpeechmaticsRealtimeMessage): string {
   return resultsToText(data.results);
 }
 
-function buildSpokenTtsText(text: string): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-
-  const maxChars = 240;
-  const maxWords = 55;
-  const maxSentences = 2;
-  const sentenceMatches = normalized.match(/[^.!?]+[.!?]?/g) ?? [normalized];
-
-  let spoken = "";
-  let sentenceCount = 0;
-
-  for (const sentenceRaw of sentenceMatches) {
-    const sentence = sentenceRaw.trim();
-    if (!sentence) continue;
-
-    const candidate = spoken ? `${spoken} ${sentence}` : sentence;
-    const words = candidate.split(/\s+/).filter(Boolean).length;
-
-    if (candidate.length > maxChars || words > maxWords) {
-      break;
-    }
-
-    spoken = candidate;
-    sentenceCount += 1;
-
-    if (sentenceCount >= maxSentences) {
-      break;
-    }
-  }
-
-  if (spoken) return spoken;
-  return normalized.slice(0, maxChars);
-}
-
 function getRealtimeWsCandidates(jwt: string, language: string): string[] {
   const encodedJwt = encodeURIComponent(jwt);
   const endpointOverride = (process.env.NEXT_PUBLIC_SPEECHMATICS_RT_WS_ENDPOINT ?? "").trim();
@@ -157,6 +123,9 @@ export default function LorePage() {
   const shouldRecordRef = useRef(false);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const responseAudioUrlRef = useRef<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recorderChunksRef = useRef<BlobPart[]>([]);
+  const realtimeAvailableRef = useRef(false);
 
   const stopVoiceMeter = useCallback(() => {
     meterSessionRef.current += 1;
@@ -360,6 +329,89 @@ export default function LorePage() {
     }
   }, [stopVoiceMeter]);
 
+  const startBackupRecorder = useCallback((stream: MediaStream) => {
+    if (typeof MediaRecorder === "undefined") {
+      console.warn("MediaRecorder is not available in this browser.");
+      return false;
+    }
+
+    recorderChunksRef.current = [];
+    const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+    const supportedMime = mimeCandidates.find((mime) => MediaRecorder.isTypeSupported(mime));
+
+    const recorder = supportedMime
+      ? new MediaRecorder(stream, { mimeType: supportedMime })
+      : new MediaRecorder(stream);
+
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recorderChunksRef.current.push(event.data);
+      }
+    };
+
+    recorder.onerror = (event) => {
+      console.error("Backup recorder error:", event);
+    };
+
+    recorder.start(250);
+    mediaRecorderRef.current = recorder;
+    return true;
+  }, []);
+
+  const stopBackupRecorder = useCallback(async (): Promise<File | null> => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return null;
+
+    if (recorder.state !== "inactive") {
+      await new Promise<void>((resolve) => {
+        const cleanup = () => {
+          recorder.removeEventListener("stop", cleanup);
+          resolve();
+        };
+        recorder.addEventListener("stop", cleanup);
+        recorder.stop();
+      });
+    }
+
+    mediaRecorderRef.current = null;
+    const chunks = recorderChunksRef.current;
+    recorderChunksRef.current = [];
+    if (!chunks.length) return null;
+
+    const blobType = recorder.mimeType || "audio/webm";
+    const blob = new Blob(chunks, { type: blobType });
+    if (blob.size === 0) return null;
+
+    const extension = blobType.includes("mp4") ? "mp4" : "webm";
+    return new File([blob], `fallback-stt.${extension}`, { type: blobType });
+  }, []);
+
+  const transcribeFallbackAudio = useCallback(async (audioFile: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append("audio", audioFile);
+    formData.append("language", "en");
+
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let message = `Fallback transcription failed (${response.status}).`;
+      try {
+        const payload = (await response.json()) as { error?: string };
+        if (payload.error) message = payload.error;
+      } catch {
+        const body = await response.text();
+        if (body) message = `${message} ${body}`;
+      }
+      throw new Error(message);
+    }
+
+    const payload = (await response.json()) as { transcript?: string };
+    return (payload.transcript ?? "").trim();
+  }, []);
+
   const fetchRealtimeJwt = useCallback(async (): Promise<string> => {
     const response = await fetch("/api/speechmatics-token", { method: "POST" });
     if (!response.ok) {
@@ -410,8 +462,25 @@ export default function LorePage() {
                   transcription_config: {
                     language,
                     enable_partials: true,
-                    max_delay: 1,
+                    max_delay: 3,
                     operating_point: "enhanced",
+                    enable_entities: true,
+                    punctuation_overrides: {
+                      permitted_marks: [".", ",", "?"],
+                    },
+                    additional_vocab: [
+                      { content: "CFM56", sounds_like: ["CFM 56", "CFM fifty-six"] },
+                      { content: "CFM56-5B", sounds_like: ["CFM 56 5B", "CFM fifty-six five B"] },
+                      { content: "F-GKXA", sounds_like: ["foxtrot golf kilo x-ray alpha", "F G K X A"] },
+                      { content: "N1", sounds_like: ["N one", "en one"] },
+                      { content: "N2", sounds_like: ["N two", "en two"] },
+                      { content: "borescope", sounds_like: ["bore scope"] },
+                      { content: "AMM", sounds_like: ["A M M"] },
+                      { content: "SOP", sounds_like: ["S O P", "standard operating procedure"] },
+                      { content: "EASA", sounds_like: ["E A S A"] },
+                      { content: "Lore" },
+                      { content: "Airbus A320", sounds_like: ["A 320", "airbus 320", "airbus A three twenty"] },
+                    ],
                   },
                 })
               );
@@ -524,10 +593,10 @@ export default function LorePage() {
       realtimeFinalRef.current = "";
       realtimePartialRef.current = "";
 
-      const jwt = await fetchRealtimeJwt();
-      const socket = await connectRealtimeSocket(jwt, "en", audioContext.sampleRate, sessionId);
-      attachRealtimeHandlers(socket, sessionId);
-      realtimeSocketRef.current = socket;
+      // Start capturing audio IMMEDIATELY into a pre-buffer
+      // so the first words aren't lost during JWT + WebSocket setup
+      const preBuffer: Float32Array[] = [];
+      let socketReady = false;
 
       const processor = audioContext.createScriptProcessor(2048, 1, 1);
       const sink = audioContext.createGain();
@@ -538,18 +607,39 @@ export default function LorePage() {
 
       processor.onaudioprocess = (event) => {
         if (sessionId !== realtimeSessionRef.current) return;
-        const liveSocket = realtimeSocketRef.current;
-        if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) return;
-
         const channel = event.inputBuffer.getChannelData(0);
         const chunk = new Float32Array(channel.length);
         chunk.set(channel);
+
+        if (!socketReady) {
+          // Buffer audio while socket connects
+          preBuffer.push(chunk);
+          return;
+        }
+
+        const liveSocket = realtimeSocketRef.current;
+        if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) return;
         realtimeSeqNoRef.current += 1;
         liveSocket.send(chunk.buffer);
       };
 
       realtimeProcessorRef.current = processor;
       realtimeSinkRef.current = sink;
+
+      // Now connect (JWT + WebSocket) while audio is being buffered
+      const jwt = await fetchRealtimeJwt();
+      const socket = await connectRealtimeSocket(jwt, "en", audioContext.sampleRate, sessionId);
+      attachRealtimeHandlers(socket, sessionId);
+      realtimeSocketRef.current = socket;
+
+      // Flush pre-buffer to catch the first words
+      for (const buffered of preBuffer) {
+        if (socket.readyState !== WebSocket.OPEN) break;
+        realtimeSeqNoRef.current += 1;
+        socket.send(buffered.buffer);
+      }
+      preBuffer.length = 0;
+      socketReady = true;
     },
     [attachRealtimeHandlers, connectRealtimeSocket, fetchRealtimeJwt]
   );
@@ -603,6 +693,72 @@ export default function LorePage() {
     return finalTranscript;
   }, []);
 
+  const resolveFinalTranscript = useCallback(async (): Promise<string> => {
+    const realtimeTranscript = (await stopRealtimeTranscription()).trim();
+    const backupAudio = await stopBackupRecorder();
+
+    if (realtimeTranscript) {
+      realtimeAvailableRef.current = true;
+      return realtimeTranscript;
+    }
+
+    if (!backupAudio) {
+      return "";
+    }
+
+    try {
+      const fallbackTranscript = await transcribeFallbackAudio(backupAudio);
+      if (fallbackTranscript) {
+        setTranscript(fallbackTranscript);
+      }
+      return fallbackTranscript;
+    } catch (error) {
+      console.error("Fallback transcription failed:", error);
+      return "";
+    }
+  }, [stopBackupRecorder, stopRealtimeTranscription, transcribeFallbackAudio]);
+
+  const startSpeechCaptureSession = useCallback(
+    async (modeLabel: string) => {
+      const stream = await startVoiceMeter();
+      if (!stream) throw new Error("Microphone stream unavailable.");
+
+      startBackupRecorder(stream);
+
+      if (!shouldRecordRef.current) {
+        await stopBackupRecorder();
+        stopVoiceMeter();
+        return;
+      }
+
+      try {
+        await startRealtimeTranscription(stream);
+        realtimeAvailableRef.current = true;
+      } catch (error) {
+        realtimeAvailableRef.current = false;
+        console.warn(
+          `Realtime Speechmatics failed for ${modeLabel}; using fallback transcription on release.`,
+          error
+        );
+        setTranscript("Realtime STT unavailable. Release to transcribe from recorded audio.");
+      }
+
+      if (!shouldRecordRef.current) {
+        await stopRealtimeTranscription();
+        await stopBackupRecorder();
+        stopVoiceMeter();
+      }
+    },
+    [
+      startBackupRecorder,
+      startRealtimeTranscription,
+      startVoiceMeter,
+      stopBackupRecorder,
+      stopRealtimeTranscription,
+      stopVoiceMeter,
+    ]
+  );
+
   const handleStartCapture = useCallback(async () => {
     if (isRecording || isLoading) return;
     stopResponseAudio();
@@ -613,21 +769,12 @@ export default function LorePage() {
     setSources([]);
 
     try {
-      const stream = await startVoiceMeter();
-      if (!stream) throw new Error("Microphone stream unavailable.");
-      if (!shouldRecordRef.current) {
-        stopVoiceMeter();
-        return;
-      }
-      await startRealtimeTranscription(stream);
-      if (!shouldRecordRef.current) {
-        await stopRealtimeTranscription();
-        stopVoiceMeter();
-      }
+      await startSpeechCaptureSession("capture");
     } catch (error) {
       console.error("Failed to start capture recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
       setTranscript(`Transcription error: ${message}`);
@@ -635,10 +782,9 @@ export default function LorePage() {
   }, [
     isLoading,
     isRecording,
-    startRealtimeTranscription,
-    startVoiceMeter,
+    startSpeechCaptureSession,
     stopResponseAudio,
-    stopRealtimeTranscription,
+    stopBackupRecorder,
     stopVoiceMeter,
   ]);
 
@@ -648,7 +794,7 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await stopRealtimeTranscription();
+      const finalTranscript = await resolveFinalTranscript();
       stopVoiceMeter();
       if (!finalTranscript) {
         setTranscript("No speech detected. Try again.");
@@ -686,7 +832,7 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
 
   const handleStartQuery = useCallback(async () => {
     if (isRecording || isLoading) return;
@@ -698,21 +844,12 @@ export default function LorePage() {
     setSources([]);
 
     try {
-      const stream = await startVoiceMeter();
-      if (!stream) throw new Error("Microphone stream unavailable.");
-      if (!shouldRecordRef.current) {
-        stopVoiceMeter();
-        return;
-      }
-      await startRealtimeTranscription(stream);
-      if (!shouldRecordRef.current) {
-        await stopRealtimeTranscription();
-        stopVoiceMeter();
-      }
+      await startSpeechCaptureSession("query");
     } catch (error) {
       console.error("Failed to start query recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
       setTranscript(`Transcription error: ${message}`);
@@ -720,10 +857,9 @@ export default function LorePage() {
   }, [
     isLoading,
     isRecording,
-    startRealtimeTranscription,
-    startVoiceMeter,
+    startSpeechCaptureSession,
     stopResponseAudio,
-    stopRealtimeTranscription,
+    stopBackupRecorder,
     stopVoiceMeter,
   ]);
 
@@ -733,7 +869,7 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await stopRealtimeTranscription();
+      const finalTranscript = await resolveFinalTranscript();
       stopVoiceMeter();
 
       if (!finalTranscript) {
@@ -773,7 +909,7 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
 
   const handleStartLog = useCallback(async () => {
     if (isRecording || isLoading) return;
@@ -785,21 +921,12 @@ export default function LorePage() {
     setSources([]);
 
     try {
-      const stream = await startVoiceMeter();
-      if (!stream) throw new Error("Microphone stream unavailable.");
-      if (!shouldRecordRef.current) {
-        stopVoiceMeter();
-        return;
-      }
-      await startRealtimeTranscription(stream);
-      if (!shouldRecordRef.current) {
-        await stopRealtimeTranscription();
-        stopVoiceMeter();
-      }
+      await startSpeechCaptureSession("log");
     } catch (error) {
       console.error("Failed to start log recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
       setTranscript(`Transcription error: ${message}`);
@@ -807,10 +934,9 @@ export default function LorePage() {
   }, [
     isLoading,
     isRecording,
-    startRealtimeTranscription,
-    startVoiceMeter,
+    startSpeechCaptureSession,
     stopResponseAudio,
-    stopRealtimeTranscription,
+    stopBackupRecorder,
     stopVoiceMeter,
   ]);
 
@@ -820,7 +946,7 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await stopRealtimeTranscription();
+      const finalTranscript = await resolveFinalTranscript();
       stopVoiceMeter();
 
       if (!finalTranscript) {
@@ -867,7 +993,7 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
 
   // ── Auto mode handlers ────────────────────────────
   const handleStartAuto = useCallback(async () => {
@@ -880,21 +1006,12 @@ export default function LorePage() {
     setSources([]);
 
     try {
-      const stream = await startVoiceMeter();
-      if (!stream) throw new Error("Microphone stream unavailable.");
-      if (!shouldRecordRef.current) {
-        stopVoiceMeter();
-        return;
-      }
-      await startRealtimeTranscription(stream);
-      if (!shouldRecordRef.current) {
-        await stopRealtimeTranscription();
-        stopVoiceMeter();
-      }
+      await startSpeechCaptureSession("auto");
     } catch (error) {
       console.error("Failed to start auto recording:", error);
       setIsRecording(false);
       shouldRecordRef.current = false;
+      void stopBackupRecorder();
       stopVoiceMeter();
       const message = error instanceof Error ? error.message : "Unable to start transcription.";
       setTranscript(`Transcription error: ${message}`);
@@ -902,10 +1019,9 @@ export default function LorePage() {
   }, [
     isLoading,
     isRecording,
-    startRealtimeTranscription,
-    startVoiceMeter,
+    startSpeechCaptureSession,
     stopResponseAudio,
-    stopRealtimeTranscription,
+    stopBackupRecorder,
     stopVoiceMeter,
   ]);
 
@@ -915,7 +1031,7 @@ export default function LorePage() {
     setIsRecording(false);
 
     try {
-      const finalTranscript = await stopRealtimeTranscription();
+      const finalTranscript = await resolveFinalTranscript();
       stopVoiceMeter();
 
       if (!finalTranscript) {
@@ -959,7 +1075,7 @@ export default function LorePage() {
       }
       setSources(autoSources);
 
-      void playTtsResponse(answer).catch((error) => {
+      void playTtsResponse(buildSpokenTtsText(answer)).catch((error) => {
         console.error("TTS failed for auto:", error);
       });
     } catch (error) {
@@ -970,16 +1086,17 @@ export default function LorePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isRecording, playTtsResponse, stopRealtimeTranscription, stopVoiceMeter]);
+  }, [isRecording, playTtsResponse, resolveFinalTranscript, stopVoiceMeter]);
 
   useEffect(() => {
     return () => {
       shouldRecordRef.current = false;
       void stopRealtimeTranscription();
+      void stopBackupRecorder();
       stopResponseAudio();
       stopVoiceMeter();
     };
-  }, [stopRealtimeTranscription, stopResponseAudio, stopVoiceMeter]);
+  }, [stopBackupRecorder, stopRealtimeTranscription, stopResponseAudio, stopVoiceMeter]);
 
   const onStart =
     mode === "auto"

@@ -52,7 +52,7 @@ Browser
 **Everyone together.**
 
 - [ ] Clone repo, `npm install`
-- [ ] Share `.env.local` with all API keys (Speechmatics, OpenAI/Claude, Backboard, ElevenLabs)
+- [ ] Share `.env.local` with all API keys (Speechmatics, OpenAI, Backboard)
 - [ ] El Houssain: créer compte Backboard → récupérer API key → créer threads F-GKXA + marc-delaunay
 - [ ] El Houssain: deploy to Vercel → get staging URL
 - [ ] Timothé: confirm Speechmatics API key works (test call)
@@ -67,11 +67,11 @@ Browser
 **Owner: Timothé + Soheil**
 
 ### Timothé
-- `lib/speechmatics.ts` — real-time STT via WebSocket
+- `frontend/lib/speechmatics.ts` — real-time STT via WebSocket
   - Stream audio chunks → accumulate transcript
   - Handle `final` vs `partial` transcript events
   - Return full transcript on silence detection
-- `app/api/transcribe/route.ts` — proxy endpoint for browser → Speechmatics
+- `frontend/app/api/transcribe/route.ts` — proxy endpoint for browser → Speechmatics
 
 ### Soheil
 - `hooks/useAudioRecorder.ts` — MediaRecorder, start/stop, output blob
@@ -87,13 +87,13 @@ Browser
 **Owner: El Houssain + Ivan**
 
 ### El Houssain
-- `lib/backboard.ts` — client Backboard, helpers getThread / sendMessage / uploadDoc
+- `frontend/lib/backboard.ts` — client Backboard, helpers getThread / sendMessage / uploadDoc
   ```typescript
   // 1 thread = 1 avion ou 1 technicien
   // memory="Auto" → Backboard extrait et stocke les faits automatiquement
   // Pas d'embedding manuel, pas d'upsert
   ```
-- `app/api/capture/route.ts`
+- `frontend/app/api/capture/route.ts`
   ```
   POST /api/capture
   body: { transcript, technician, tail }
@@ -101,7 +101,7 @@ Browser
   → sendMessage(thread=tail, content=transcript, memory="Auto")
   → return { confirmation }
   ```
-- `app/api/query/route.ts`
+- `frontend/app/api/query/route.ts`
   ```
   POST /api/query
   body: { transcript, tail }
@@ -109,7 +109,7 @@ Browser
     avec documents=SOPs (RAG auto Backboard)
   → return { response, sources }
   ```
-- `app/api/log/route.ts`
+- `frontend/app/api/log/route.ts`
   ```
   POST /api/log
   body: { transcript, tail, technician }
@@ -138,12 +138,12 @@ Browser
 - `lib/elicitation-agent.ts` — Capture mode
   - After senior speaks, generates 1 follow-up question
   - Re-records answer, structures final knowledge object
-- `lib/tts.ts` — ElevenLabs TTS
+- `frontend/app/api/tts/route.ts` — OpenAI TTS
   - Input: text string
   - Output: audio blob → autoplay in browser
 
 ### El Houssain
-- Wire full loop in `app/page.tsx`:
+- Wire full loop in `frontend/app/page.tsx`:
   `hold button → record → STT → orchestrator → endpoint → TTS → play`
 - Error handling: API failures → graceful fallback text response
 
