@@ -9,6 +9,18 @@ Track 1: Communication & Human Experience · February 28 – March 1, 2026
 
 ---
 
+## Status
+
+**V1 was built in 24 hours** by a team of 4 — 43 commits, from 2026-02-28 17:47 to 2026-03-01 16:37, first line of code to final demo.
+
+That build is frozen at the [`v0.1-hackathon`](../../releases/tag/v0.1-hackathon) tag. Run `git checkout v0.1-hackathon` to get exactly what was demoed on stage.
+
+Development continues on `main`, so `main` may diverge from the demo above.
+
+**This is a prototype, not production software.** It runs on synthetic SOPs and mock aircraft data — no real EASA-regulated documents, no real tail numbers, no real technician data. API routes have no authentication. Features described below as differentiators (contradiction detection, multi-source confidence scoring) are design intent, not shipped code. See [docs/trust-safety.md](docs/trust-safety.md) for the full demo-vs-production boundary.
+
+---
+
 ## The Problem
 
 By 2033, 1 in 5 aviation maintenance jobs will go unfilled. Every retiring senior technician takes decades of contextual knowledge that was never written down — the exceptions, the quirks of specific airframes, the patterns that manuals can't capture.
