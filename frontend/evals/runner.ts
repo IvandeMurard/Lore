@@ -13,6 +13,8 @@
 
 import {
     evaluateAcceptance,
+    ERROR as ERROR_CODE,
+    FAIL as FAIL_CODE,
     MAX_REGRESSION_PP,
     type CheckedVerdict,
 } from "./acceptance";
@@ -228,6 +230,12 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
             for (const verdict of verdicts) {
                 console.log(`        ✓ ${verdict.grader}: ${verdict.detail}`);
             }
+            // Passing responses are printed too. A green case only proves the
+            // patterns were satisfied, and reading the answer is the only way
+            // to tell a case that holds from a case that is too easy.
+            console.log(
+                `        ↳ response: ${response.replace(/\s+/g, " ").trim()}`
+            );
         }
     }
 
@@ -341,11 +349,12 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
         );
     }
 
-    // A tier-1 breach or a baseline regression is fatal even if the raw pass
-    // count looks acceptable.
-    return failed > 0 || verdict.code === 1 || regressed
-        ? Math.max(failed, 1)
-        : 0;
+    // Exit codes are the CI contract (ACCEPTANCE.md): 0 PASS, 1 FAIL,
+    // 2 ERROR, 3 WARN. A tier-1 breach or a baseline regression is fatal
+    // even when the raw pass count looks acceptable; a tier-2/3 miss inside
+    // its budget warns without blocking.
+    if (failed > 0 || verdict.code === FAIL_CODE || regressed) return FAIL_CODE;
+    return verdict.code;
 }
 
 // ─────────────────────────────────────────────
@@ -411,7 +420,7 @@ async function main() {
     if (opts.target === "regression") {
         const missed = await runRegressions();
         console.log("");
-        process.exit(missed > 0 ? 1 : 0);
+        process.exit(missed > 0 ? FAIL_CODE : 0);
     }
 
     const target = resolveTarget(opts.target, opts.baseUrl);
@@ -426,13 +435,19 @@ async function main() {
         }
     }
 
-    const failed = await runCases(target, opts);
+    const code = await runCases(target, opts);
 
     console.log("");
-    process.exit(failed > 0 ? 1 : 0);
+    process.exit(code);
 }
 
 main().catch((error) => {
-    console.error("\n[evals] Runner failed:", error instanceof Error ? error.message : error);
-    process.exit(1);
+    console.error(
+        "\n[evals] Runner failed:",
+        error instanceof Error ? error.message : error
+    );
+    // ERROR, not FAIL: no measurement was taken, which is a different thing
+    // from a measurement that came back bad. CI must not read a crash as a
+    // quality signal in either direction.
+    process.exit(ERROR_CODE);
 });
