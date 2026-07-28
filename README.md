@@ -95,9 +95,11 @@ Lore:   "Logged. F-GKXA memory updated."
 
 ---
 
-## Team
+## Author
 
-Built in 24 hours by a team of 4.
+**Ivan de Murard** — [@IvandeMurard](https://github.com/IvandeMurard)
+
+V1 (`v0.1-hackathon`) was built in 24 hours by a team of 4. Development since the hackathon is mine. See [AUTHORS.md](AUTHORS.md) for the full contributor list.
 
 ---
 
