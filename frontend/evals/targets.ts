@@ -40,14 +40,24 @@ export const goldenTarget: EvalTarget = {
 // grades the prompt that docs/trust-safety.md claims enforces SOP
 // primacy, which is worth knowing even while it is unwired.
 
+// Evals run at temperature 0 by default. At the production 0.5 the pass
+// rate is a sample, not a measurement: two runs of the same 53 cases gave
+// 38/53 and 36/53 with only 12 of the 17 failures in common. Override with
+// LORE_EVAL_TEMPERATURE to measure that spread deliberately.
+export const EVAL_TEMPERATURE = Number.parseFloat(
+    process.env.LORE_EVAL_TEMPERATURE ?? "0"
+);
+
 export const synthesisTarget: EvalTarget = {
     name: "synthesis",
-    describe: "lib/llm.ts synthesizeResponse — needs OPENAI_API_KEY (live, costs tokens)",
+    describe: `lib/llm.ts synthesizeResponse at temperature ${EVAL_TEMPERATURE} — needs OPENAI_API_KEY (live, costs tokens)`,
     live: true,
     supports: () => true,
     run: async (evalCase) => {
         const { synthesizeResponse } = await import("../lib/llm");
-        return synthesizeResponse(evalCase.question, evalCase.context);
+        return synthesizeResponse(evalCase.question, evalCase.context, {
+            temperature: EVAL_TEMPERATURE,
+        });
     },
 };
 

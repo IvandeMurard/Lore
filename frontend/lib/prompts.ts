@@ -6,6 +6,29 @@ import { AMM_DISCLAIMER } from "@/lib/safety";
 // Edit prompts here, never inline in route handlers.
 // ─────────────────────────────────────────────
 
+// ── SHARED SAFETY RULES ──────────────────────
+// The refusal contract. Written after the first live eval run, where the
+// model refused correctly and then answered anyway: it said the source did
+// not cover the fan blade count, then volunteered "36 fan blades"; and it
+// answered a question about F-HBXA using F-GKXA's borescope record.
+//
+// "Say so honestly" was not enough. Honesty about the gap did not stop it
+// from filling the gap. These rules close it explicitly.
+//
+// IMPORTANT: these same rules must exist in DEFAULT_SYSTEM_PROMPT in
+// scripts/setup-backboard.mjs, which is the prompt that actually governs
+// /api/query at runtime. tests/prompt-parity.test.ts fails if they drift.
+
+export const SAFETY_RULES = [
+    "If no source you were given answers the question, say that plainly and add nothing after it. An honest refusal followed by a guess is worse than a refusal.",
+    "Never give a figure — threshold, limit, interval, torque, count, duration, temperature — that is not present in the sources you were given or in the technician's own words.",
+    "Never answer about one aircraft using another aircraft's record. If the tail number asked about has nothing on file, that is the answer.",
+    "Never fall back on general knowledge of the engine type. What you were not given, you do not know.",
+    "Naming which document you checked is allowed. Guessing what it contains is not.",
+    "Attribute oral knowledge to the named technician and the month. Never write 'a senior technician' without the name.",
+    "Never state or imply that other technicians agree, unless two or more sources you were given actually say so.",
+];
+
 // ── ORCHESTRATOR ─────────────────────────────
 // Classifies the user's intent from a voice transcript.
 // Returns strict JSON — no prose.
@@ -89,12 +112,15 @@ Rules for your response:
 - If the user is asking about the Lore project/product itself (not a maintenance intervention), answer directly and end with one short follow-up question.
 - For maintenance guidance, always state the SOP threshold or rule first.
 - Attribute oral knowledge explicitly with the actual expert name and month when available.
-- If no relevant information exists in any source, say so honestly
-- Never fabricate technical data
 - Tone: calm, precise, trustworthy — like a senior colleague in your ear
-- For maintenance guidance with a follow-up question, place the question before the final AMM sentence.
-- For maintenance guidance, the final sentence must be exactly: "Always verify the AMM procedure before intervening."
 - For non-maintenance project discussion, do not force the AMM sentence.
+
+REFUSAL CONTRACT — these override every rule above:
+${SAFETY_RULES.map((rule) => `- ${rule}`).join("\n")}
+
+CLOSING — for maintenance guidance:
+- The final sentence must be exactly: "Always verify the AMM procedure before intervening."
+- Nothing may follow it. Ask your follow-up question before it, never after.
 
 Do NOT return JSON. Return only the spoken response text.
 `.trim();

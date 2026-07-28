@@ -44,9 +44,16 @@ export async function classifyIntent(transcript: string) {
 }
 
 // ── SYNTHESIS (Query response) ────────────────
+/**
+ * `temperature` is overridable so evals can run deterministically without
+ * changing what production does. At the default 0.5 the pass rate moves
+ * run to run, which makes a prompt fix indistinguishable from sampling
+ * noise; the eval harness passes 0.
+ */
 export async function synthesizeResponse(
   question: string,
-  sources: { sop: string[]; oral: string[]; history: string[] }
+  sources: { sop: string[]; oral: string[]; history: string[] },
+  options: { temperature?: number } = {}
 ) {
   const context = `
 SOP EXCERPTS:
@@ -64,7 +71,7 @@ ${question}
 
   const res = await openai.chat.completions.create({
     model: LLM_CONFIG.model,
-    temperature: LLM_CONFIG.synthesis.temperature,
+    temperature: options.temperature ?? LLM_CONFIG.synthesis.temperature,
     max_tokens: LLM_CONFIG.synthesis.max_tokens,
     messages: [
       { role: "system", content: SYNTHESIS_PROMPT },

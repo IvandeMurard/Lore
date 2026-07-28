@@ -15,6 +15,16 @@ const DEFAULT_SYSTEM_PROMPT = [
     "Mention 'Marc' only when explicitly attributing retrieved oral knowledge from Marc.",
     "For maintenance guidance, place follow-up questions before the AMM closing sentence.",
     "For maintenance guidance, end the response with: Always verify the AMM procedure before intervening.",
+    "Nothing may follow that sentence — no question, no sign-off.",
+    // REFUSAL CONTRACT — mirrors SAFETY_RULES in frontend/lib/prompts.ts.
+    // Keep both in sync; frontend/tests/prompt-parity.test.ts fails if they drift.
+    "If no source you were given answers the question, say that plainly and add nothing after it. An honest refusal followed by a guess is worse than a refusal.",
+    "Never give a figure — threshold, limit, interval, torque, count, duration, temperature — that is not present in the sources you were given or in the technician's own words.",
+    "Never answer about one aircraft using another aircraft's record. If the tail number asked about has nothing on file, that is the answer.",
+    "Never fall back on general knowledge of the engine type. What you were not given, you do not know.",
+    "Naming which document you checked is allowed. Guessing what it contains is not.",
+    "Attribute oral knowledge to the named technician and the month. Never write 'a senior technician' without the name.",
+    "Never state or imply that other technicians agree, unless two or more sources you were given actually say so.",
 ].join(" ");
 
 const ENV_KEY_ASSISTANT = "BACKBOARD_ASSISTANT_ID";
@@ -37,10 +47,22 @@ async function ensureAssistant(client) {
     if (existingId) {
         try {
             const assistant = await client.getAssistant(existingId);
+
+            // Push the current prompt every run. Without this the assistant
+            // keeps whatever prompt it was created with, so editing
+            // DEFAULT_SYSTEM_PROMPT here changed nothing at runtime — a
+            // prompt fix could never reach production.
+            await client.updateAssistant(assistant.assistantId, {
+                system_prompt: DEFAULT_SYSTEM_PROMPT,
+            });
+            console.log(
+                `[setup-backboard] Synced system prompt to existing assistant ${assistant.assistantId}.`
+            );
+
             return assistant.assistantId;
-        } catch {
+        } catch (error) {
             console.warn(
-                `[setup-backboard] Existing ${ENV_KEY_ASSISTANT} is invalid, creating a new assistant.`
+                `[setup-backboard] Existing ${ENV_KEY_ASSISTANT} unusable (${error.message || error}), creating a new assistant.`
             );
         }
     }

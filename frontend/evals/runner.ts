@@ -11,6 +11,11 @@
 // Exit code 1 on any failure, so this can gate a commit or CI.
 // ─────────────────────────────────────────────
 
+import {
+    evaluateAcceptance,
+    ERROR,
+    type CheckedVerdict,
+} from "./acceptance";
 import { CASES, CATEGORIES, type EvalCase } from "./cases";
 import {
     gradeAbstention,
@@ -18,6 +23,7 @@ import {
     gradeAttribution,
     gradeForbiddenPatterns,
     gradeLearnerAddress,
+    gradeNoFabricatedConsensus,
     gradeNoFabricatedMeasurements,
     gradeRequiredPatterns,
     gradeSopCitedFirst,
@@ -96,8 +102,10 @@ export function gradeResponse(
         verdicts.push(gradeRequiredPatterns(response, expect.required));
     }
 
-    // Always checked: cheap, and the failure is embarrassing in a demo.
+    // Always checked: cheap, and both failures are severe out of proportion
+    // to the cost of looking for them.
     verdicts.push(gradeLearnerAddress(response));
+    verdicts.push(gradeNoFabricatedConsensus(response, context));
 
     return verdicts;
 }
@@ -132,6 +140,7 @@ function pad(text: string, width: number): string {
 // ─────────────────────────────────────────────
 
 async function runCases(target: EvalTarget, opts: Options): Promise<number> {
+    const checks: CheckedVerdict[] = [];
     let selected = CASES;
     if (opts.category) {
         selected = selected.filter((c) => c.category === opts.category);
@@ -173,6 +182,14 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
         }
 
         const verdicts = gradeResponse(evalCase, response);
+        for (const verdict of verdicts) {
+            checks.push({
+                grader: verdict.grader,
+                passed: verdict.passed,
+                caseId: evalCase.id,
+            });
+        }
+
         const broken = verdicts.filter((v) => !v.passed);
         const ok = broken.length === 0;
 
@@ -218,6 +235,28 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
             (failures.length ? `\n  failing: ${failures.join(", ")}` : "")
     );
 
+    // ── Acceptance criteria ──
+    // The pass rate above is a measurement. This is the decision.
+    const verdict = evaluateAcceptance(checks);
+
+    console.log("\n  acceptance criteria (evals/ACCEPTANCE.md)");
+    for (const result of verdict.tiers) {
+        if (result.checked === 0) continue;
+        const rate = (result.rate * 100).toFixed(1);
+        const required = (result.spec.threshold * 100).toFixed(0);
+        console.log(
+            `    tier ${result.spec.tier} ${pad(result.spec.name, 8)} ${result.held}/${result.checked} checks  ${pad(`${rate}%`, 7)} (need ${required}%)  ${result.meetsThreshold ? "ok" : "BELOW"}`
+        );
+        if (result.failures.length > 0) {
+            console.log(`             ↳ ${result.failures.join(", ")}`);
+        }
+    }
+
+    console.log(`\n  VERDICT: ${verdict.label}`);
+    for (const reason of verdict.reasons) {
+        console.log(`    ${reason}`);
+    }
+
     if (!target.live && skipped > 0) {
         console.log(
             `\n  Note: ${skipped} case(s) have no reference answer yet. A green golden`
@@ -230,7 +269,8 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
         );
     }
 
-    return failed;
+    // A tier-1 breach is fatal even if the raw pass count looks acceptable.
+    return failed > 0 || verdict.code === 1 ? Math.max(failed, 1) : 0;
 }
 
 // ─────────────────────────────────────────────

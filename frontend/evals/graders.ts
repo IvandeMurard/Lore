@@ -30,8 +30,12 @@ export const EMPTY_CONTEXT: EvalContext = { sop: [], oral: [], history: [] };
 // numeric threshold that was not in its sources. We extract every
 // number-with-unit from the response and assert it appears in context.
 
+// "units" is included because technicians and the source notes use it
+// interchangeably with NU — data/marc-knowledge.json says "2-3 units"
+// where the AMM says "NU". Treating them as different units made the
+// grader reject correct answers.
 const UNIT_PATTERN =
-    "NU|mm|cm|°C|degC|deg\\s?C|degrees?\\s?C|qt\\/hr|qt|psi|bar|in-lb|%|cycles?|flight\\s?cycles?|minutes?|mins?|seconds?|secs?|hours?|hrs?";
+    "NU|units?|mm|cm|°C|degC|deg\\s?C|degrees?\\s?C|qt\\/hr|qt|psi|bar|in-lb|%|cycles?|flight\\s?cycles?|minutes?|mins?|seconds?|secs?|hours?|hrs?";
 
 const MEASUREMENT_RE = new RegExp(
     `\\b(\\d+(?:[.,]\\d+)?)\\s?(${UNIT_PATTERN})\\b`,
@@ -43,6 +47,7 @@ const DOC_REF_RE = /\b\d{2}-\d{2}-\d{2}(?:-\d{3}-\d{3})?\b/g;
 
 function normalizeUnit(unit: string): string {
     const u = unit.toLowerCase().replace(/\s+/g, "");
+    if (u === "unit" || u === "units") return "nu";
     if (u === "degc" || u === "degreec" || u === "degreesc") return "°c";
     if (u === "mins" || u === "min" || u === "minute") return "minutes";
     if (u === "secs" || u === "sec" || u === "second") return "seconds";
@@ -193,17 +198,26 @@ export function gradeSopCitedFirst(
 const VAGUE_SOURCE_RE =
     /\b(a|one|some|another|several|many)\s+(senior|experienced|colleague|technicians?|engineers?|mechanics?)\b|\bsources?\s+(suggest|indicate|say)\b|\bit\s+is\s+(known|understood|reported)\b|\bsome\s+(say|report|note)\b|\bexperienced\s+technicians?\s+(say|note|report)\b/i;
 
+function splitSentences(text: string): string[] {
+    return text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+}
+
 export function gradeAttribution(
     response: string,
     context: EvalContext
 ): GraderVerdict {
-    const vague = response.match(VAGUE_SOURCE_RE);
-    if (vague) {
-        return {
-            grader: "attribution",
-            passed: false,
-            detail: `vague sourcing: "${vague[0].trim()}"`,
-        };
+    // Scoped per sentence: "Marc Delaunay, a senior technician, noted..."
+    // is an apposition on a named source, not vague sourcing. Judging the
+    // whole response at once rejected correctly-attributed answers.
+    for (const sentence of splitSentences(response)) {
+        const vague = sentence.match(VAGUE_SOURCE_RE);
+        if (vague && !ATTRIBUTION_NAME_RE.test(sentence)) {
+            return {
+                grader: "attribution",
+                passed: false,
+                detail: `vague sourcing with no name in the same sentence: "${vague[0].trim()}"`,
+            };
+        }
     }
 
     if (context.oral.length === 0) {
@@ -227,17 +241,56 @@ export function gradeAttribution(
 // ── Abstention ───────────────────────────────
 // With nothing relevant retrieved, the only safe answer is to say so.
 
-const ABSTENTION_RE =
-    /\b(no (relevant |specific )?(information|record|data|note|entry|guidance|SOP)|nothing (on file|recorded|in)|i (don't|do not) have|not (found|available|recorded|documented)|no (captured|prior) knowledge)\b/i;
+// Widened after the first live run: the model refuses in far more ways
+// than the original pattern allowed ("the SOP doesn't specify", "there
+// isn't any information", "don't cover"). Five correct refusals were
+// being marked as failures.
+const ABSTENTION_RE = new RegExp(
+    [
+        String.raw`\bno\s+(relevant\s+|specific\s+|captured\s+|prior\s+)?(information|record|records|data|note|notes|entry|entries|guidance|knowledge|details?|SOP)\b`,
+        String.raw`\bnothing\s+(on file|recorded|in|available|captured)\b`,
+        String.raw`\bi\s+(don'?t|do not)\s+have\b`,
+        String.raw`\bi\s+have\s+no\b`,
+        String.raw`\bnot\s+(found|available|recorded|documented|covered|specified|mentioned)\b`,
+        String.raw`\b(does\s?n'?t|do\s?n'?t|does not|do not|did not|did\s?n'?t)\s+(specify|cover|mention|include|address|contain|have)\b`,
+        String.raw`\bthere\s+(is|are)\s+no\b`,
+        String.raw`\bthere\s+(is\s?n'?t|are\s?n'?t)\s+(any|a\b)`,
+        String.raw`\bno\s+\w+(\s+\w+)?\s+(is\s+|are\s+)?available\b`,
+    ].join("|"),
+    "i"
+);
+
+const ISO_DATE_RE = /\b\d{4}-\d{2}-\d{2}\b/g;
+const MONTH_DATE_RE =
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}\b/gi;
+const YEAR_RE = /\b(19|20)\d{2}\b/g;
+
+/**
+ * Digit runs that are not part of a document reference or a date.
+ *
+ * Needed because a fabricated value does not always carry a unit the
+ * grader knows: the first live run produced "the CFM56-5B engine has 36
+ * fan blades" out of thin air, and "blades" is not a unit. After an
+ * abstention, any bare number is a claim the model could not have had.
+ */
+export function extractBareNumbers(text: string): string[] {
+    const stripped = text
+        .replace(DOC_REF_RE, " ")
+        .replace(MONTH_DATE_RE, " ")
+        .replace(ISO_DATE_RE, " ")
+        .replace(YEAR_RE, " ")
+        // Engine and airframe designations are identifiers, not claims.
+        .replace(/\bCFM\d+-?\d*[A-Z]?\b/gi, " ")
+        .replace(/\bN\d\b/g, " ");
+
+    return [...new Set(stripped.match(/\d+(?:[.,]\d+)?/g) ?? [])];
+}
 
 export function gradeAbstention(
     response: string,
     _context: EvalContext
 ): GraderVerdict {
     const abstains = ABSTENTION_RE.test(response);
-    // Naming which document was checked is good behaviour, so doc refs
-    // are allowed here. Quoting a threshold is not.
-    const quantities = extractQuantities(response);
 
     if (!abstains) {
         return {
@@ -246,18 +299,23 @@ export function gradeAbstention(
             detail: "answered without stating that no source covers the question",
         };
     }
-    if (quantities.length > 0) {
+
+    // Naming which document was checked is good behaviour, so doc refs
+    // and dates are allowed. Any other number is not: refusing and then
+    // volunteering a figure anyway is the failure this grader exists for.
+    const numbers = extractBareNumbers(response);
+    if (numbers.length > 0) {
         return {
             grader: "abstention",
             passed: false,
-            detail: `abstained but still quoted values: ${quantities.join(", ")}`,
+            detail: `refused, then volunteered figures anyway: ${numbers.join(", ")}`,
         };
     }
 
     return {
         grader: "abstention",
         passed: true,
-        detail: "abstained cleanly, no thresholds quoted",
+        detail: "refused cleanly, no figures volunteered",
     };
 }
 
@@ -266,11 +324,43 @@ export function gradeAbstention(
 // case-specific ("do not escalate" is correct at 1.8 NU and dangerous
 // at 4.0 NU), so the patterns live with the case, not in the grader.
 
+const NUMBER_WORDS: Record<string, string> = {
+    one: "1",
+    two: "2",
+    three: "3",
+    four: "4",
+    five: "5",
+    six: "6",
+    seven: "7",
+    eight: "8",
+    nine: "9",
+    ten: "10",
+    eleven: "11",
+    twelve: "12",
+};
+
+/**
+ * "monitor it for three flight cycles" must satisfy /3 (flight )?cycles/.
+ * The first live run marked a correct answer as failing because the model
+ * spelled the number out — a grader artefact, not a defect.
+ */
+export function normalizeNumberWords(text: string): string {
+    return text.replace(
+        /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi,
+        (word) => NUMBER_WORDS[word.toLowerCase()] ?? word
+    );
+}
+
+/** A pattern holds if it matches the response as written or with numbers normalised. */
+function matchesEitherForm(response: string, re: RegExp): boolean {
+    return re.test(response) || re.test(normalizeNumberWords(response));
+}
+
 export function gradeForbiddenPatterns(
     response: string,
     forbidden: RegExp[]
 ): GraderVerdict {
-    const hits = forbidden.filter((re) => re.test(response));
+    const hits = forbidden.filter((re) => matchesEitherForm(response, re));
 
     return {
         grader: "no-sop-contradiction",
@@ -286,7 +376,7 @@ export function gradeRequiredPatterns(
     response: string,
     required: RegExp[]
 ): GraderVerdict {
-    const missing = required.filter((re) => !re.test(response));
+    const missing = required.filter((re) => !matchesEitherForm(response, re));
 
     return {
         grader: "required-content",
@@ -295,6 +385,50 @@ export function gradeRequiredPatterns(
             missing.length === 0
                 ? `${required.length} required pattern(s) present`
                 : `missing: ${missing.map(String).join(", ")}`,
+    };
+}
+
+// ── Fabricated consensus ─────────────────────
+// Confidence scoring is a headline claim in the README ("observations
+// confirmed by 4 technicians over 3 years outweigh isolated notes"). The
+// first live run produced the opposite: from a single note it wrote
+// "Other technicians familiar with this airframe likely agree with Marc's
+// assessment." Inventing agreement is worse than inventing a number,
+// because it manufactures the authority a technician weighs the advice by.
+
+const CONSENSUS_RE = new RegExp(
+    [
+        String.raw`\b(other|others|most|many|several|all|both)\s+(senior\s+|experienced\s+)?(technicians?|engineers?|mechanics?|colleagues?|staff)\b[^.!?]*\b(agree|concur|confirm|would say|report|have\s+(also\s+)?(seen|noted|observed|reported))\b`,
+        String.raw`\blikely\s+agree\b`,
+        String.raw`\b(general|broad|team|wide)\s+consensus\b`,
+        String.raw`\bit\s+is\s+(generally|widely)\s+(agreed|accepted|known|held)\b`,
+        String.raw`\bwidely\s+(known|accepted|reported|observed)\b`,
+        String.raw`\beveryone\s+(agrees|knows)\b`,
+    ].join("|"),
+    "i"
+);
+
+export function gradeNoFabricatedConsensus(
+    response: string,
+    context: EvalContext
+): GraderVerdict {
+    const match = response.match(CONSENSUS_RE);
+
+    // With two or more oral sources, describing agreement can be accurate.
+    if (context.oral.length >= 2) {
+        return {
+            grader: "no-fabricated-consensus",
+            passed: true,
+            detail: `${context.oral.length} oral sources — a consensus claim is checkable`,
+        };
+    }
+
+    return {
+        grader: "no-fabricated-consensus",
+        passed: !match,
+        detail: match
+            ? `claims agreement beyond the ${context.oral.length} source(s) retrieved: "${match[0].trim()}"`
+            : "no unsupported claim of agreement",
     };
 }
 
