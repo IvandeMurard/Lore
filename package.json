@@ -8,6 +8,13 @@
     "start": "npm --prefix frontend run start",
     "lint": "npm --prefix frontend run lint",
     "test:sop": "npm --prefix frontend run test:sop",
+    "test:graders": "npm --prefix frontend run test:graders",
+    "test": "npm --prefix frontend run test",
+    "evals": "npm --prefix frontend run evals",
+    "evals:regression": "npm --prefix frontend run evals:regression",
+    "evals:synthesis": "npm --prefix frontend run evals:synthesis",
+    "evals:live": "npm --prefix frontend run evals:live",
+    "check": "npm --prefix frontend run check",
     "seed": "npm run seed-backboard",
     "setup-backboard": "node scripts/setup-backboard.mjs",
     "seed-backboard": "npx tsx scripts/seed-backboard.ts"

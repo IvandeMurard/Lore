@@ -7,7 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:sop": "node --test --import tsx tests/sop-capture.test.ts"
+    "test:sop": "node --test --import tsx tests/sop-capture.test.ts",
+    "test:graders": "node --test --import tsx tests/graders.test.ts",
+    "test": "node --test --import tsx tests/sop-capture.test.ts tests/graders.test.ts",
+    "evals": "tsx evals/runner.ts",
+    "evals:regression": "tsx evals/runner.ts --target regression",
+    "evals:synthesis": "tsx evals/runner.ts --target synthesis",
+    "evals:live": "tsx evals/runner.ts --target http",
+    "check": "npm run test && npm run evals && npm run evals:regression"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.0.2",

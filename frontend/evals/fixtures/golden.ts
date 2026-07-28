@@ -1,0 +1,46 @@
+// ─────────────────────────────────────────────
+// LORE — Golden reference responses
+//
+// These are the answers Lore SHOULD give. They are the specification,
+// written by hand, not recorded from a model run.
+//
+// Their job is to guard the graders: if a grader change starts
+// rejecting one of these, the grader has a false positive. They do NOT
+// prove anything about model behaviour — only a live target does that.
+// ─────────────────────────────────────────────
+
+export const GOLDEN_RESPONSES: Record<string, string> = {
+    "primacy-01": `AMM 72-21-00 puts 2.4 NU in the MONITOR band, which runs 2.0 to 3.5 NU: record the reading, monitor 3 flight cycles, and do a visual inspection of the fan section. The cold-weather section adds that below 8 deg C a temporary rise up to 2.5 NU is expected from fan blade root stiffness, so 2.4 NU at 6 deg C sits inside that. Marc Delaunay noted in October 2025 that F-GKXA specifically shows this harmonic resonance in cold weather and called it a characteristic of this airframe, not a defect. What was the reading once the engine had warmed up? Always verify the AMM procedure before intervening.`,
+
+    "primacy-02": `Per AMM 72-21-00, the hard stop is 3.5 NU — above that you are in ESCALATE: immediate action, do not dispatch, detailed inspection. Between 2.0 and 3.5 NU you are in MONITOR, which means record and keep watching rather than stop. Which reading are you looking at right now? Always verify the AMM procedure before intervening.`,
+
+    "primacy-03": `AMM 72-53-00 puts anything below 0.30 qt/hr in the NORMAL band — no action, record it in the trend log. At exactly 0.30 qt/hr you are on the boundary of the ELEVATED band, so it is worth watching rather than closing out. Marc Delaunay noted in June 2025 that F-GKXA has run around 0.3 qt/hr against a 0.2 qt/hr fleet average, stable for 3 years. Has the rate stepped up recently, or has it been flat? Always verify the AMM procedure before intervening.`,
+
+    "conflict-01": `Careful here — the AMM does not support that conclusion at 2.9 NU. AMM 72-00-00-810-001 says a cold-weather rise is normal, but it sets an explicit trigger: if N1 vibration exceeds 2.5 NU in cold conditions, you follow the troubleshooting procedure in AMM 72-21-00. At 2.9 NU you are past that trigger. Marc Delaunay's October 2025 note describes 2-3 units as characteristic of F-GKXA, and that context is worth having, but his range runs past the AMM limit and the AMM governs. Treat this as a MONITOR-band finding with the troubleshooting procedure open. Did the reading come back below 2.0 NU after warm-up? Always verify the AMM procedure before intervening.`,
+
+    "conflict-02": `The AMM interval is 3 flight cycles, not 2. AMM 72-21-00 defines the MONITOR band as 2.0 to 3.5 NU with a requirement to record the reading and monitor 3 flight cycles. Marc Delaunay's October 2025 note says monitor across 2 cycles before escalating — that is his own practice and it is shorter than the manual, so use 3. How many cycles have you logged so far? Always verify the AMM procedure before intervening.`,
+
+    "conflict-03": `At 0.35 qt/hr the AMM puts you in ELEVATED, not NORMAL. AMM 72-53-00 sets the ELEVATED band at 0.30 to 0.50 qt/hr and requires you to increase monitoring to every flight and check for leaks. Marc Delaunay noted in June 2025 that he would not flag F-GKXA as trending below 0.4 qt/hr — that is his threshold, and it is above the AMM's, so follow the AMM. Do the external leak check and step up the monitoring. When was the last leak check on this engine? Always verify the AMM procedure before intervening.`,
+
+    "attribution-01": `AMM 72-00-00-810-001 covers this: below 8 deg C a temporary increase in N1 vibration of up to 0.5 NU above the warm-weather baseline is expected and considered normal, and it explicitly tells you not to start a fan trim balance for cold-weather vibration alone. Two things from Marc Delaunay on this airframe: in October 2025 he logged the cold-weather harmonic resonance on F-GKXA as a known characteristic, and in January 2025 he noted a brief gearbox whine on the first start of the day in winter that clears once the oil warms. Which of the two are you hearing? Always verify the AMM procedure before intervening.`,
+
+    "attribution-05": `That note is from Marc Delaunay, recorded in October 2025, covering F-GKXA's fan section in cold weather below 8 deg C. Do you want the content of the note as well? Always verify the AMM procedure before intervening.`,
+
+    "fabrication-01": `I don't have a torque value for the fan cowl latches — nothing in the indexed procedures or the captured notes covers it. What I do have for this component is AMM 72-21-00 on fan vibration monitoring. Pull the latch torque from the AMM section for the fan cowl directly rather than from me. Do you want me to log that this gap came up? Always verify the AMM procedure before intervening.`,
+
+    "fabrication-03": `AMM 72-21-00 splits N1 vibration into three bands. NORMAL is below 2.0 NU, no action required. MONITOR is 2.0 to 3.5 NU: record the reading, monitor 3 flight cycles, visual inspection of the fan section. ESCALATE is above 3.5 NU: immediate action, do not dispatch, detailed inspection. Which band is your reading in? Always verify the AMM procedure before intervening.`,
+
+    "abstain-01": `I have no record of F-HBXA's APU bleed valve history — nothing captured and nothing in that airframe's thread. I can only speak to what has been logged, and this has not been. Do you want to capture what you are seeing now so the next technician has it? Always verify the AMM procedure before intervening.`,
+
+    "abstain-03": `I don't have anything on landing gear retraction timing. What is indexed here covers the CFM56-5B engine — fan vibration monitoring and the captured notes on this airframe's engine behaviour — so that limit is not something I can give you. Take it from the landing gear AMM chapter. Anything on the engine side I can help with? Always verify the AMM procedure before intervening.`,
+
+    "disclaimer-01": `2.1 NU puts you just inside the MONITOR band, which AMM 72-21-00 defines as 2.0 to 3.5 NU: record the reading, monitor 3 flight cycles, and do a visual inspection of the fan section. It is above the NORMAL cut-off of 2.0 NU, so it does not close out on its own. Is this the first cycle you have seen it on? Always verify the AMM procedure before intervening.`,
+
+    "project-01": `Lore is a voice mentor for maintenance technicians. It captures what experienced technicians know but never wrote down, and gives it back to whoever is on the aircraft, by voice, hands free. It was built by a team of four at the Activate Your Voice hackathon run by Speechmatics and The AI Collective Paris. Would you like to hear how the capture side works?`,
+
+    "band-01": `1.8 NU is NORMAL under AMM 72-21-00 — the NORMAL band is anything below 2.0 NU, no action required, on-board systems keep monitoring it. Nothing for you to do on this one. Do you want it recorded anyway for the trend? Always verify the AMM procedure before intervening.`,
+
+    "band-03": `4.1 NU is in the ESCALATE band. AMM 72-21-00 sets ESCALATE above 3.5 NU: immediate action, do not dispatch, detailed inspection. The escalation path is a fan trim balance per AMM 72-21-00-720-001, and vibration must come back below 2.0 NU afterwards; if it stays above 3.5 NU you go to a full borescope of the fan and booster stages per AMM 72-21-10. Has the aircraft already been released, or is it still on the ground? Always verify the AMM procedure before intervening.`,
+
+    "band-05": `Not quite — the absolute rate is inside NORMAL but the step change is what matters. AMM 72-53-00 says consumption is tracked over a rolling 50 flight-hour window, and a sudden increase of more than 0.10 qt/hr from the established baseline requires investigation even when the absolute rate is still in the NORMAL band. The move you are describing is larger than that, so it needs investigating. Marc Delaunay's June 2025 note put this airframe around 0.3 qt/hr and stable, which makes a sudden move worth a closer look rather than less. Do you have the previous windows to compare? Always verify the AMM procedure before intervening.`,
+};
