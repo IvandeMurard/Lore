@@ -63,6 +63,8 @@ The `synthesis` baseline was frozen only after the canary passed: **four consecu
 
 Re-run the canary before trusting any future threshold change.
 
+The baseline still stands at 53 cases while the set is 64, so the eleven later cases report as drift rather than regression. That is deliberate: three of them fail, and re-freezing now would turn a red run green by definition.
+
 ## A caution about the 100%
 
 Four rounds of grader fixes stand behind that score, and every one of them loosened a grader — negation it could not read, refusal phrasings it did not know, spelled-out numbers, a role apposition on a named source. Each was justified on its own. The cumulative direction was always toward accepting more, which is exactly how a ruler gets calibrated to the thing it measures.
@@ -71,11 +73,23 @@ What guards against that is the regression suite: 17 genuinely dangerous respons
 
 A case set that passes completely has also stopped being an instrument of discovery and become a safety net. Both are useful; they are not the same object. The next real test of this harness is new hard cases, not another run of these.
 
+## Enforced in CI
+
+[`.github/workflows/eval-gate.yml`](../../.github/workflows/eval-gate.yml), staged the way Aetherix rolled its own gate out:
+
+| Job | Verdict handling |
+|---|---|
+| offline gate | blocking |
+| coverage gate | FAIL blocks, WARN reports |
+| live gate | advisory, never blocks |
+
+The live job must never block a merge. It costs tokens and leans on a third-party API, so gating on it hands our ability to ship to someone else's uptime.
+
 ## Not yet enforced
 
 Honest list of what this file specifies but the harness does not yet do:
 
-- **No CI gate.** Nothing runs on a pull request. Aetherix's `eval-gate.yml` is the model: trigger only on changes to prompts, LLM plumbing or the dataset, post a sticky report, block on FAIL.
-- **No eval-coverage gate.** Changing a prompt without touching the case set should at least WARN. That is the mechanism that keeps evals from rotting while the product moves.
-- **Live targets are not run automatically.** Someone has to remember. That is the weakest link in the loop.
+- **Coverage WARN does not block.** Changing a prompt without touching the case set only reports. Flip it once the case set stops moving every week.
 - **No semantic grader.** Every grader is a regex over surface form, so all four false-positive rounds were meaning the patterns could not see. This is where an LLM judge earns its place — as a second opinion on tiers 2 and 3, never as the tier-1 gate.
+- **The `synthesis` prompt is still not the one that answers.** `/api/query` delegates to Backboard, so the rule lives in two places and `prompt-parity.test.ts` is all that keeps them together.
+- **Capture and log extraction are ungraded.** The harness measures query synthesis only.
