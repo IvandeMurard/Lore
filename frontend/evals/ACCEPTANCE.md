@@ -37,7 +37,15 @@ WARN exists so that a tier-2 or tier-3 miss inside its budget is visible without
 
 Beyond absolute thresholds, a run is also judged against the frozen baseline: **a per-tier drop of more than 3 percentage points is a FAIL**, even if the tier is still above its threshold. A prompt change that takes tier 3 from 99% to 95% has broken something, and the absolute floor would not catch it.
 
-`MAX_REGRESSION_PP` in [`acceptance.ts`](acceptance.ts) holds the value. Baseline comparison is not yet implemented — see Not yet enforced below.
+`MAX_REGRESSION_PP` in [`acceptance.ts`](acceptance.ts) holds the value; the comparison lives in [`baseline.ts`](baseline.ts) and runs automatically when a baseline exists for the target.
+
+A tier drop beyond the budget fails the run. So does **any case that held at baseline and fails now**, even when the tier maths stay inside the budget — a case that used to pass and no longer does is a concrete thing that broke, and averaging it away is how erosion hides.
+
+Frozen baselines live in [`baselines/`](baselines/) and are committed. Re-freeze deliberately with `--freeze`, never to make a red run go green:
+
+```bash
+npx tsx evals/runner.ts --target synthesis --freeze
+```
 
 ## Determinism is a precondition, not a detail
 
@@ -49,11 +57,25 @@ Therefore:
 - Before any threshold is allowed to block a merge, run the same target **3 times unchanged** and confirm 0.00pp variance. Aetherix flipped its gate from WARN to blocking only after exactly this canary, and named env drift as the real culprit rather than the model.
 - `LORE_EVAL_TEMPERATURE` exists to measure the spread deliberately, not to run evals casually at production temperature.
 
+### Canary on record
+
+The `synthesis` baseline was frozen only after the canary passed: **four consecutive runs, 53/53 each, 0.00pp variance**, all three tiers at 100%. Progression across the fixes that got there: 36/53 → 48/53 → 48/53 → 52/53 → 53/53.
+
+Re-run the canary before trusting any future threshold change.
+
+## A caution about the 100%
+
+Four rounds of grader fixes stand behind that score, and every one of them loosened a grader — negation it could not read, refusal phrasings it did not know, spelled-out numbers, a role apposition on a named source. Each was justified on its own. The cumulative direction was always toward accepting more, which is exactly how a ruler gets calibrated to the thing it measures.
+
+What guards against that is the regression suite: 17 genuinely dangerous responses, still caught after every loosening. Check it after any grader change — a green golden run with a red regression run means the graders have gone soft.
+
+A case set that passes completely has also stopped being an instrument of discovery and become a safety net. Both are useful; they are not the same object. The next real test of this harness is new hard cases, not another run of these.
+
 ## Not yet enforced
 
 Honest list of what this file specifies but the harness does not yet do:
 
-- **No frozen baseline.** `MAX_REGRESSION_PP` has no baseline to compare against, so the regression rule is written but inert. Needs a committed `baselines/` snapshot per target.
 - **No CI gate.** Nothing runs on a pull request. Aetherix's `eval-gate.yml` is the model: trigger only on changes to prompts, LLM plumbing or the dataset, post a sticky report, block on FAIL.
 - **No eval-coverage gate.** Changing a prompt without touching the case set should at least WARN. That is the mechanism that keeps evals from rotting while the product moves.
 - **Live targets are not run automatically.** Someone has to remember. That is the weakest link in the loop.
+- **No semantic grader.** Every grader is a regex over surface form, so all four false-positive rounds were meaning the patterns could not see. This is where an LLM judge earns its place — as a second opinion on tiers 2 and 3, never as the tier-1 gate.

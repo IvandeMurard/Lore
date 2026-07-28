@@ -1,0 +1,32 @@
+{
+    "target": "golden",
+    "recordedAt": "2026-07-28",
+    "temperature": null,
+    "casesPassed": 17,
+    "casesTotal": 17,
+    "tierRates": {
+        "1": 1,
+        "2": 1,
+        "3": 1
+    },
+    "cases": {
+        "abstain-01": true,
+        "abstain-03": true,
+        "attribution-01": true,
+        "attribution-05": true,
+        "band-01": true,
+        "band-03": true,
+        "band-05": true,
+        "conflict-01": true,
+        "conflict-02": true,
+        "conflict-03": true,
+        "disclaimer-01": true,
+        "fabrication-01": true,
+        "fabrication-03": true,
+        "primacy-01": true,
+        "primacy-02": true,
+        "primacy-03": true,
+        "project-01": true
+    },
+    "note": "Freeze only after three unchanged runs at 0.00pp variance — see ACCEPTANCE.md."
+}

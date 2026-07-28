@@ -55,9 +55,22 @@ export const synthesisTarget: EvalTarget = {
     supports: () => true,
     run: async (evalCase) => {
         const { synthesizeResponse } = await import("../lib/llm");
-        return synthesizeResponse(evalCase.question, evalCase.context, {
+        const { ensureAmmDisclaimer, shouldAppendAmmDisclaimer } = await import(
+            "../lib/safety"
+        );
+
+        const raw = await synthesizeResponse(evalCase.question, evalCase.context, {
             temperature: EVAL_TEMPERATURE,
         });
+
+        // Mirror what /api/query does to the model's output. Grading the raw
+        // completion would measure something that never reaches a technician,
+        // and would leave the disclaimer invariant sampled rather than
+        // guaranteed. The grader now regression-guards the code path: remove
+        // the call and the eval fails.
+        return shouldAppendAmmDisclaimer(evalCase.question)
+            ? ensureAmmDisclaimer(raw)
+            : raw.trim();
     },
 };
 

@@ -32,23 +32,41 @@ const MAINTENANCE_HINTS = [
     "maintenance",
 ];
 
+const DISCLAIMER_ANYWHERE_RE = new RegExp(
+    AMM_DISCLAIMER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "gi"
+);
+
+/**
+ * Guarantees the AMM sentence is the last thing said.
+ *
+ * Appending when missing is not enough: asked to both close with the AMM
+ * sentence and ask a follow-up question, the model reliably does both in
+ * the wrong order — "...before intervening. Is there anything else?" —
+ * which reads as if the reminder applied to the pleasantry.
+ *
+ * So any existing occurrence is removed and the sentence re-appended at
+ * the end. docs/trust-safety.md calls this disclaimer non-removable; that
+ * is only true if code enforces it rather than the prompt asking nicely.
+ */
 export function ensureAmmDisclaimer(text: string): string {
-    const normalized = text.replace(/\s+/g, " ").trim();
-    if (!normalized) {
+    const stripped = text
+        .replace(DISCLAIMER_ANYWHERE_RE, " ")
+        .replace(/\s+/g, " ")
+        // Tidy punctuation left stranded by the removal.
+        .replace(/\s+([.!?,;])/g, "$1")
+        .replace(/([.!?])\s*[.!?]+/g, "$1")
+        .trim();
+
+    if (!stripped) {
         return AMM_DISCLAIMER;
     }
 
-    const normalizedLower = normalized.toLowerCase();
-    const disclaimerLower = AMM_DISCLAIMER.toLowerCase();
-    if (normalizedLower.endsWith(disclaimerLower)) {
-        return normalized;
+    if (/[.!?]$/.test(stripped)) {
+        return `${stripped} ${AMM_DISCLAIMER}`;
     }
 
-    if (/[.!?]$/.test(normalized)) {
-        return `${normalized} ${AMM_DISCLAIMER}`;
-    }
-
-    return `${normalized}. ${AMM_DISCLAIMER}`;
+    return `${stripped}. ${AMM_DISCLAIMER}`;
 }
 
 export function shouldAppendAmmDisclaimer(userTranscript: string): boolean {

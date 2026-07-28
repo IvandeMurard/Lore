@@ -35,3 +35,6 @@ yarn-error.log*
 .vscode/
 *.swp
 *.swo
+
+# Eval run outputs (regenerate with npm run evals:*)
+eval-run*.txt

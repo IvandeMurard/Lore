@@ -13,9 +13,15 @@
 
 import {
     evaluateAcceptance,
-    ERROR,
+    MAX_REGRESSION_PP,
     type CheckedVerdict,
 } from "./acceptance";
+import {
+    buildBaseline,
+    compareToBaseline,
+    readBaseline,
+    writeBaseline,
+} from "./baseline";
 import { CASES, CATEGORIES, type EvalCase } from "./cases";
 import {
     gradeAbstention,
@@ -30,7 +36,7 @@ import {
     type GraderVerdict,
 } from "./graders";
 import { REGRESSIONS } from "./fixtures/regressions";
-import { resolveTarget, type EvalTarget } from "./targets";
+import { EVAL_TEMPERATURE, resolveTarget, type EvalTarget } from "./targets";
 
 type Options = {
     target: string;
@@ -38,6 +44,7 @@ type Options = {
     category?: string;
     caseId?: string;
     verbose: boolean;
+    freeze: boolean;
 };
 
 function parseArgs(argv: string[]): Options {
@@ -45,6 +52,7 @@ function parseArgs(argv: string[]): Options {
         target: "golden",
         baseUrl: process.env.LORE_EVAL_BASE_URL ?? "http://localhost:3000",
         verbose: false,
+        freeze: false,
     };
 
     for (let i = 0; i < argv.length; i += 1) {
@@ -56,6 +64,7 @@ function parseArgs(argv: string[]): Options {
         else if (arg === "--category") opts.category = next();
         else if (arg === "--case") opts.caseId = next();
         else if (arg === "--verbose" || arg === "-v") opts.verbose = true;
+        else if (arg === "--freeze") opts.freeze = true;
         else if (arg.startsWith("--target=")) opts.target = arg.slice(9);
         else if (arg.startsWith("--category=")) opts.category = arg.slice(11);
         else if (arg.startsWith("--case=")) opts.caseId = arg.slice(7);
@@ -141,6 +150,7 @@ function pad(text: string, width: number): string {
 
 async function runCases(target: EvalTarget, opts: Options): Promise<number> {
     const checks: CheckedVerdict[] = [];
+    const caseOutcomes = new Map<string, boolean>();
     let selected = CASES;
     if (opts.category) {
         selected = selected.filter((c) => c.category === opts.category);
@@ -178,6 +188,7 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
             const tally = byCategory.get(evalCase.category) ?? { pass: 0, fail: 0 };
             tally.fail += 1;
             byCategory.set(evalCase.category, tally);
+            caseOutcomes.set(evalCase.id, false);
             continue;
         }
 
@@ -192,6 +203,7 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
 
         const broken = verdicts.filter((v) => !v.passed);
         const ok = broken.length === 0;
+        caseOutcomes.set(evalCase.id, ok);
 
         const tally = byCategory.get(evalCase.category) ?? { pass: 0, fail: 0 };
         if (ok) tally.pass += 1;
@@ -252,9 +264,69 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
         }
     }
 
-    console.log(`\n  VERDICT: ${verdict.label}`);
+    // ── Baseline ──
+    // Absolute thresholds catch a collapse; the baseline catches erosion.
+    let regressed = false;
+
+    if (opts.freeze) {
+        const path = writeBaseline(
+            buildBaseline({
+                target: target.name,
+                temperature: target.live ? EVAL_TEMPERATURE : null,
+                tiers: verdict.tiers,
+                caseOutcomes,
+                note: "Freeze only after three unchanged runs at 0.00pp variance — see ACCEPTANCE.md.",
+            })
+        );
+        console.log(`\n  baseline frozen → ${path}`);
+    } else {
+        const baseline = readBaseline(target.name);
+        if (!baseline) {
+            console.log(
+                `\n  no baseline for "${target.name}" — the ${MAX_REGRESSION_PP}pp regression rule is inert.`
+            );
+            console.log("  Freeze one with --freeze once three runs agree.");
+        } else {
+            const diff = compareToBaseline(baseline, {
+                tiers: verdict.tiers,
+                caseOutcomes,
+            });
+
+            console.log(
+                `\n  vs baseline ${baseline.recordedAt} (${baseline.casesPassed}/${baseline.casesTotal})`
+            );
+
+            for (const regression of diff.regressions) {
+                console.log(`    REGRESSION  ${regression}`);
+                regressed = true;
+            }
+            if (diff.newlyFailing.length > 0) {
+                // Worth failing on even inside the pp budget: a case that used
+                // to hold and no longer does is a concrete thing that broke.
+                console.log(
+                    `    REGRESSION  newly failing: ${diff.newlyFailing.join(", ")}`
+                );
+                regressed = true;
+            }
+            if (diff.newlyPassing.length > 0) {
+                console.log(`    improved: ${diff.newlyPassing.join(", ")}`);
+            }
+            for (const note of diff.driftNotes) {
+                console.log(`    drift: ${note}`);
+            }
+            if (!regressed && diff.driftNotes.length === 0) {
+                console.log("    no regression against baseline");
+            }
+        }
+    }
+
+    const label = regressed && verdict.label === "PASS" ? "FAIL" : verdict.label;
+    console.log(`\n  VERDICT: ${label}`);
     for (const reason of verdict.reasons) {
         console.log(`    ${reason}`);
+    }
+    if (regressed) {
+        console.log("    regressed against the frozen baseline");
     }
 
     if (!target.live && skipped > 0) {
@@ -269,8 +341,11 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
         );
     }
 
-    // A tier-1 breach is fatal even if the raw pass count looks acceptable.
-    return failed > 0 || verdict.code === 1 ? Math.max(failed, 1) : 0;
+    // A tier-1 breach or a baseline regression is fatal even if the raw pass
+    // count looks acceptable.
+    return failed > 0 || verdict.code === 1 || regressed
+        ? Math.max(failed, 1)
+        : 0;
 }
 
 // ─────────────────────────────────────────────

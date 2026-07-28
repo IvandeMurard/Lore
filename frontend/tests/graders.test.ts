@@ -318,6 +318,15 @@ test("abstention accepts the refusal phrasings the model actually uses", () => {
     }
 });
 
+test("abstention accepts 'couldn't find' as a refusal", () => {
+    // abstain-04, verbatim from the second live run.
+    const verdict = gradeAbstention(
+        "I couldn't find any information from Marc Delaunay or any other source about the F-GKXA hydraulic pump.",
+        EMPTY_CONTEXT
+    );
+    assert.equal(verdict.passed, true);
+});
+
 test("abstention still fails when the model refuses then invents a figure", () => {
     // abstain-05, verbatim. "blades" is not a unit, so the quantity
     // extractor alone missed it — this is why bare numbers are checked.
@@ -413,6 +422,23 @@ test("gradeNoFabricatedConsensus allows describing agreement when sources agree"
         ctx([], ["Marc Delaunay note", "Jean-Pierre note"])
     );
     assert.equal(verdict.passed, true);
+});
+
+test("gradeNoFabricatedConsensus accepts explicitly declining to claim agreement", () => {
+    // attribution-06, verbatim from the third live run. This is the wanted
+    // behaviour, and it uses the same words as the failure it must not be
+    // confused with.
+    for (const good of [
+        "There is no indication from other technicians in the sources provided, so I can't confirm broader agreement.",
+        "Only one source covers this, so I cannot confirm that other technicians agree.",
+        "I don't have notes from other technicians that would confirm this.",
+    ]) {
+        assert.equal(
+            gradeNoFabricatedConsensus(good, ctx([], ["Marc Delaunay note"])).passed,
+            true,
+            `should accept: ${good}`
+        );
+    }
 });
 
 test("gradeNoFabricatedConsensus accepts a single attributed observation", () => {

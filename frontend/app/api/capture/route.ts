@@ -109,11 +109,17 @@ Transcript:
         try {
             extracted = (JSON.parse(extractedRaw) as ExtractedKnowledge) ?? {};
         } catch {
+            // No confidence value here on purpose. This branch runs when the
+            // extraction failed to parse, which is the moment confidence is
+            // lowest — the previous hard-coded 0.7 was above neutral, which
+            // is backwards. Nothing downstream reads the field, and an
+            // invented number in a safety product is worse than its absence:
+            // code and people will trust it. A real value has to be counted
+            // from corroborating sources, not asserted here.
             extracted = {
                 knowledge: transcript,
                 component: component || "Unknown",
                 conditions: conditions || "Standard",
-                confidence: 0.7,
             };
         }
 

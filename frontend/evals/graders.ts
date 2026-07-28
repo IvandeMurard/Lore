@@ -256,6 +256,9 @@ const ABSTENTION_RE = new RegExp(
         String.raw`\bthere\s+(is|are)\s+no\b`,
         String.raw`\bthere\s+(is\s?n'?t|are\s?n'?t)\s+(any|a\b)`,
         String.raw`\bno\s+\w+(\s+\w+)?\s+(is\s+|are\s+)?available\b`,
+        // "I couldn't find any information from Marc Delaunay or any other
+        // source" — a clean refusal the first two runs kept marking failed.
+        String.raw`\b(could\s?n'?t|could not|cannot|can\s?n'?t|(?:am\s+)?unable to)\s+(find|locate|see)\b`,
     ].join("|"),
     "i"
 );
@@ -408,12 +411,27 @@ const CONSENSUS_RE = new RegExp(
     "i"
 );
 
+// Explicitly *declining* to claim agreement uses the same words as claiming
+// it. "There is no indication from other technicians, so I can't confirm
+// broader agreement" is the behaviour we want, and the pattern above matches
+// it on "other technicians ... confirm". Negation has to be read.
+const DECLINED_CONSENSUS_RE = new RegExp(
+    [
+        String.raw`\bno\s+(indication|evidence|record|sign|mention|other|further)\b`,
+        String.raw`\b(can'?t|cannot|could\s?n'?t|unable to)\s+confirm\b`,
+        String.raw`\b(not|never)\s+confirm(ed)?\b`,
+        String.raw`\bno\s+(broader|other|wider)\s+(agreement|consensus|corroboration)\b`,
+        String.raw`\bonly\s+(one|a single)\s+(source|note|technician|entry)\b`,
+        String.raw`\b(do\s?n'?t|does\s?n'?t|did\s?n'?t)\s+have\b`,
+        String.raw`\bno\s+one\s+else\b`,
+    ].join("|"),
+    "i"
+);
+
 export function gradeNoFabricatedConsensus(
     response: string,
     context: EvalContext
 ): GraderVerdict {
-    const match = response.match(CONSENSUS_RE);
-
     // With two or more oral sources, describing agreement can be accurate.
     if (context.oral.length >= 2) {
         return {
@@ -423,12 +441,22 @@ export function gradeNoFabricatedConsensus(
         };
     }
 
+    for (const sentence of splitSentences(response)) {
+        const match = sentence.match(CONSENSUS_RE);
+        if (!match) continue;
+        if (DECLINED_CONSENSUS_RE.test(sentence)) continue;
+
+        return {
+            grader: "no-fabricated-consensus",
+            passed: false,
+            detail: `claims agreement beyond the ${context.oral.length} source(s) retrieved: "${match[0].trim()}"`,
+        };
+    }
+
     return {
         grader: "no-fabricated-consensus",
-        passed: !match,
-        detail: match
-            ? `claims agreement beyond the ${context.oral.length} source(s) retrieved: "${match[0].trim()}"`
-            : "no unsupported claim of agreement",
+        passed: true,
+        detail: "no unsupported claim of agreement",
     };
 }
 

@@ -27,6 +27,7 @@ export const SAFETY_RULES = [
     "Naming which document you checked is allowed. Guessing what it contains is not.",
     "Attribute oral knowledge to the named technician and the month. Never write 'a senior technician' without the name.",
     "Never state or imply that other technicians agree, unless two or more sources you were given actually say so.",
+    "A refusal on a maintenance question is still maintenance guidance: close it with the AMM sentence like any other answer. Not knowing is exactly when the technician has to go to the manual.",
 ];
 
 // ── ORCHESTRATOR ─────────────────────────────
