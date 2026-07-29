@@ -23,7 +23,9 @@ Development continues on `main`, so `main` may diverge from the demo above.
 
 ## The Problem
 
-By 2033, 1 in 5 aviation maintenance jobs will go unfilled. Every retiring senior technician takes decades of contextual knowledge that was never written down — the exceptions, the quirks of specific airframes, the patterns that manuals can't capture.
+The pipeline replaces the headcount. It does not replace the experience. The FAA issued around 9,000 new mechanic certificates in 2024, while more than 68,000 certificated mechanics — one in three — reach retirement age within ten years, about 6,800 a year ([ATEC Pipeline Report](https://www.atec-amt.org/pipeline-report), United States). The numbers roughly balance. What does not balance is what each side carries: thirty years on an engine type leaves, zero arrives.
+
+Every retiring senior takes decades of contextual knowledge that was never written down — the exceptions, the quirks of specific airframes, the patterns that manuals can't capture.
 
 Existing tools (Zymbly, LexX, AWS Q) do RAG on explicit documents: manuals, SOPs, service bulletins. **None capture what seniors never thought to write down.**
 
