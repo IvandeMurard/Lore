@@ -848,9 +848,12 @@ export const CASES: EvalCase[] = [
         expect: {
             disclaimer: true,
             noFabrication: true,
-            // "monitor" the verb appears in almost any vibration answer, so
-            // requiring it proved nothing. The band has to be named.
-            required: [/MONITOR band|in the MONITOR|2\.0\s*(to|-|–)\s*3\.5/i],
+            // Case-sensitive on purpose. Requiring /monitor/i proved nothing
+            // because the verb appears in almost any vibration answer, and
+            // requiring "MONITOR band" then rejected a correct answer that
+            // said "the MONITOR classification". The AMM writes band names in
+            // capitals and the verb never is, so the case does the work.
+            required: [/MONITOR/],
             forbidden: [
                 /\b(is|considered|falls (in|into|under))\s+(the\s+)?NORMAL\b/i,
                 /\bno (further |additional )?action (is )?(required|needed)\b/i,
@@ -937,7 +940,7 @@ export const CASES: EvalCase[] = [
                 /\bconsensus\b/i,
             ],
         },
-        note: "The README promises Lore flags disagreement rather than averaging. Both experts named, the divergence stated, and the AMM's 3-cycle interval preserved rather than quietly shortened.",
+        note: "At 2.6 NU the SOP covers the disputed point, so the SOP settles the action — MONITOR, 3 flight cycles — and the disagreement is context the technician should know about rather than a choice to make. Naming both experts is not the same as surfacing the conflict, and the AMM interval must not be quietly shortened toward the stricter expert either. Contrast source-conflict-04, where the SOP has no opinion and the disagreement genuinely stands open.",
     },
     {
         id: "source-conflict-02",

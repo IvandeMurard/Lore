@@ -55,6 +55,15 @@ export async function synthesizeResponse(
   sources: { sop: string[]; oral: string[]; history: string[] },
   options: { temperature?: number } = {}
 ) {
+  // Deliberately NOT injecting lib/bands.ts output here. Tried and reverted:
+  // stating the computed band in the context fixed the boundary cases and
+  // broke others, because a long normative block perturbs every answer rather
+  // than the one property it targets. Measured: 61/64 with a bare band, then
+  // 58/64 once the conditional caveats were added, against 53/53 at baseline.
+  //
+  // Bands are used as a grading oracle instead — see evals/graders.ts
+  // gradeBandClassification. Guaranteeing that a wrong band is *detected* is
+  // worth more than hoping a longer prompt prevents it.
   const context = `
 SOP EXCERPTS:
 ${sources.sop.join("\n---\n") || "No relevant SOP found."}

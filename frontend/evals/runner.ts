@@ -29,6 +29,7 @@ import {
     gradeAbstention,
     gradeAmmDisclaimer,
     gradeAttribution,
+    gradeBandClassification,
     gradeForbiddenPatterns,
     gradeLearnerAddress,
     gradeNoFabricatedConsensus,
@@ -117,6 +118,9 @@ export function gradeResponse(
     // to the cost of looking for them.
     verdicts.push(gradeLearnerAddress(response));
     verdicts.push(gradeNoFabricatedConsensus(response, context));
+    // Has an oracle behind it, so it applies wherever the question carries a
+    // classifiable reading — no per-case opt-in.
+    verdicts.push(gradeBandClassification(response, question));
 
     return verdicts;
 }

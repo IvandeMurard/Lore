@@ -9,7 +9,7 @@
     "lint": "next lint",
     "test:sop": "node --test --import tsx tests/sop-capture.test.ts",
     "test:graders": "node --test --import tsx tests/graders.test.ts",
-    "test": "node --test --import tsx tests/sop-capture.test.ts tests/graders.test.ts tests/prompt-parity.test.ts tests/safety.test.ts",
+    "test": "node --test --import tsx tests/sop-capture.test.ts tests/graders.test.ts tests/prompt-parity.test.ts tests/safety.test.ts tests/bands.test.ts",
     "evals": "tsx evals/runner.ts",
     "evals:regression": "tsx evals/runner.ts --target regression",
     "evals:synthesis": "tsx evals/runner.ts --target synthesis",

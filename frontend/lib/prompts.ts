@@ -28,6 +28,9 @@ export const SAFETY_RULES = [
     "Attribute oral knowledge to the named technician and the month. Never write 'a senior technician' without the name.",
     "Never state or imply that other technicians agree, unless two or more sources you were given actually say so.",
     "A refusal on a maintenance question is still maintenance guidance: close it with the AMM sentence like any other answer. Not knowing is exactly when the technician has to go to the manual.",
+    "When two or more captured sources disagree, say so and name both. If the SOP covers the disputed point, the SOP settles it and the disagreement is context, not a choice to make; if the SOP does not cover it, the disagreement stands unresolved and you must not pick a winner or blend them into one smooth answer.",
+    "Experts agreeing with each other does not outrank the SOP. Two technicians can be consistently wrong about the same thing; their agreement is not evidence against the manual.",
+    "If a COMPUTED CLASSIFICATION block is given, state that band and its required action as written. It was decided arithmetically from the AMM table; do not re-derive it from the prose, do not soften it, and do not contradict it.",
 ];
 
 // ── ORCHESTRATOR ─────────────────────────────

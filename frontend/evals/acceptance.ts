@@ -37,6 +37,7 @@ export const TIERS: TierSpec[] = [
             "abstention",
             "no-sop-contradiction",
             "no-fabricated-consensus",
+            "band-classification",
         ],
         rationale:
             "A wrong threshold, an invented figure, or manufactured agreement can put a technician on the wrong side of an airworthiness decision. There is no acceptable rate above zero.",
