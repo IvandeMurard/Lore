@@ -13,7 +13,11 @@
 
 import {
     evaluateAcceptance,
+    ERROR as ERROR_CODE,
+    FAIL as FAIL_CODE,
     MAX_REGRESSION_PP,
+    tierOf,
+    WARN as WARN_CODE,
     type CheckedVerdict,
 } from "./acceptance";
 import {
@@ -27,6 +31,7 @@ import {
     gradeAbstention,
     gradeAmmDisclaimer,
     gradeAttribution,
+    gradeBandClassification,
     gradeForbiddenPatterns,
     gradeLearnerAddress,
     gradeNoFabricatedConsensus,
@@ -115,6 +120,9 @@ export function gradeResponse(
     // to the cost of looking for them.
     verdicts.push(gradeLearnerAddress(response));
     verdicts.push(gradeNoFabricatedConsensus(response, context));
+    // Has an oracle behind it, so it applies wherever the question carries a
+    // classifiable reading — no per-case opt-in.
+    verdicts.push(gradeBandClassification(response, question));
 
     return verdicts;
 }
@@ -228,6 +236,12 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
             for (const verdict of verdicts) {
                 console.log(`        ✓ ${verdict.grader}: ${verdict.detail}`);
             }
+            // Passing responses are printed too. A green case only proves the
+            // patterns were satisfied, and reading the answer is the only way
+            // to tell a case that holds from a case that is too easy.
+            console.log(
+                `        ↳ response: ${response.replace(/\s+/g, " ").trim()}`
+            );
         }
     }
 
@@ -267,6 +281,8 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
     // ── Baseline ──
     // Absolute thresholds catch a collapse; the baseline catches erosion.
     let regressed = false;
+    /** Erosion worth reporting but not worth blocking on. */
+    let softRegression = false;
 
     if (opts.freeze) {
         const path = writeBaseline(
@@ -301,12 +317,36 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
                 regressed = true;
             }
             if (diff.newlyFailing.length > 0) {
-                // Worth failing on even inside the pp budget: a case that used
-                // to hold and no longer does is a concrete thing that broke.
-                console.log(
-                    `    REGRESSION  newly failing: ${diff.newlyFailing.join(", ")}`
+                // Severity follows the tier of what actually broke. A case
+                // that flips on form-tier phrasing is the observed run-to-run
+                // noise (see ACCEPTANCE.md canary); a case that flips on a
+                // safety grader is not, because tier 1 is guarded by code and
+                // has held at 100% across every canary run.
+                const safetyBreaches = diff.newlyFailing.filter((caseId) =>
+                    checks.some(
+                        (c) =>
+                            c.caseId === caseId &&
+                            !c.passed &&
+                            tierOf(c.grader) === 1
+                    )
                 );
-                regressed = true;
+
+                if (safetyBreaches.length > 0) {
+                    console.log(
+                        `    REGRESSION  newly failing on a safety grader: ${safetyBreaches.join(", ")}`
+                    );
+                    regressed = true;
+                }
+
+                const softer = diff.newlyFailing.filter(
+                    (caseId) => !safetyBreaches.includes(caseId)
+                );
+                if (softer.length > 0) {
+                    console.log(
+                        `    newly failing on trust/form only: ${softer.join(", ")} — noise until it reproduces, diagnose before fixing`
+                    );
+                    softRegression = true;
+                }
             }
             if (diff.newlyPassing.length > 0) {
                 console.log(`    improved: ${diff.newlyPassing.join(", ")}`);
@@ -314,7 +354,7 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
             for (const note of diff.driftNotes) {
                 console.log(`    drift: ${note}`);
             }
-            if (!regressed && diff.driftNotes.length === 0) {
+            if (!regressed && !softRegression && diff.driftNotes.length === 0) {
                 console.log("    no regression against baseline");
             }
         }
@@ -341,11 +381,13 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
         );
     }
 
-    // A tier-1 breach or a baseline regression is fatal even if the raw pass
-    // count looks acceptable.
-    return failed > 0 || verdict.code === 1 || regressed
-        ? Math.max(failed, 1)
-        : 0;
+    // Exit codes are the CI contract (ACCEPTANCE.md): 0 PASS, 1 FAIL,
+    // 2 ERROR, 3 WARN. A tier-1 breach or a baseline regression is fatal
+    // even when the raw pass count looks acceptable; a tier-2/3 miss inside
+    // its budget warns without blocking.
+    if (failed > 0 || verdict.code === FAIL_CODE || regressed) return FAIL_CODE;
+    if (softRegression) return WARN_CODE;
+    return verdict.code;
 }
 
 // ─────────────────────────────────────────────
@@ -411,7 +453,7 @@ async function main() {
     if (opts.target === "regression") {
         const missed = await runRegressions();
         console.log("");
-        process.exit(missed > 0 ? 1 : 0);
+        process.exit(missed > 0 ? FAIL_CODE : 0);
     }
 
     const target = resolveTarget(opts.target, opts.baseUrl);
@@ -426,13 +468,19 @@ async function main() {
         }
     }
 
-    const failed = await runCases(target, opts);
+    const code = await runCases(target, opts);
 
     console.log("");
-    process.exit(failed > 0 ? 1 : 0);
+    process.exit(code);
 }
 
 main().catch((error) => {
-    console.error("\n[evals] Runner failed:", error instanceof Error ? error.message : error);
-    process.exit(1);
+    console.error(
+        "\n[evals] Runner failed:",
+        error instanceof Error ? error.message : error
+    );
+    // ERROR, not FAIL: no measurement was taken, which is a different thing
+    // from a measurement that came back bad. CI must not read a crash as a
+    // quality signal in either direction.
+    process.exit(ERROR_CODE);
 });

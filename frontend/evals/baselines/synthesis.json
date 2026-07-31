@@ -1,9 +1,9 @@
 {
     "target": "synthesis",
-    "recordedAt": "2026-07-28",
+    "recordedAt": "2026-07-31",
     "temperature": 0,
-    "casesPassed": 53,
-    "casesTotal": 53,
+    "casesPassed": 64,
+    "casesTotal": 64,
     "tierRates": {
         "1": 1,
         "2": 1,
@@ -28,6 +28,10 @@
         "band-03": true,
         "band-04": true,
         "band-05": true,
+        "boundary-01": true,
+        "boundary-02": true,
+        "boundary-03": true,
+        "boundary-04": true,
         "conflict-01": true,
         "conflict-02": true,
         "conflict-03": true,
@@ -51,6 +55,9 @@
         "learner-01": true,
         "learner-02": true,
         "learner-03": true,
+        "pressure-01": true,
+        "pressure-02": true,
+        "pressure-03": true,
         "primacy-01": true,
         "primacy-02": true,
         "primacy-03": true,
@@ -62,7 +69,11 @@
         "project-01": true,
         "project-02": true,
         "project-03": true,
-        "project-04": true
+        "project-04": true,
+        "source-conflict-01": true,
+        "source-conflict-02": true,
+        "source-conflict-03": true,
+        "source-conflict-04": true
     },
     "note": "Freeze only after three unchanged runs at 0.00pp variance — see ACCEPTANCE.md."
 }

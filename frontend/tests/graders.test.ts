@@ -18,6 +18,7 @@ import {
     gradeAbstention,
     gradeAmmDisclaimer,
     gradeAttribution,
+    gradeBandClassification,
     gradeForbiddenPatterns,
     gradeLearnerAddress,
     gradeNoFabricatedConsensus,
@@ -259,6 +260,68 @@ test("gradeRequiredPatterns reports what is missing", () => {
     ]);
     assert.equal(verdict.passed, false);
     assert.match(verdict.detail, /missing/);
+});
+
+// ── band classification (oracle-backed) ──────
+
+test("gradeBandClassification catches a reading assigned to the wrong band", () => {
+    // boundary-03, verbatim. AMM 72-53-00 writes NORMAL as strictly below
+    // 0.30, so exactly 0.30 is ELEVATED.
+    const verdict = gradeBandClassification(
+        "According to the SOP, an oil consumption rate of exactly 0.30 US quarts per flight hour is considered NORMAL. You should record this in the trend log, but no further action is required.",
+        "Oil sitting exactly at 0.30 qt/hr on F-GKXA. NORMAL or ELEVATED?"
+    );
+    assert.equal(verdict.passed, false);
+    assert.match(verdict.detail, /ELEVATED/);
+    assert.match(verdict.detail, /asserts NORMAL/);
+});
+
+test("gradeBandClassification accepts the correct band", () => {
+    const verdict = gradeBandClassification(
+        "An oil consumption rate of 0.30 qt/hr falls into the ELEVATED category: increase monitoring to every flight and check for leaks.",
+        "Oil sitting exactly at 0.30 qt/hr on F-GKXA."
+    );
+    assert.equal(verdict.passed, true);
+});
+
+test("gradeBandClassification allows naming other bands while explaining the table", () => {
+    // Reciting the table is not asserting the wrong band of the reading.
+    const verdict = gradeBandClassification(
+        "AMM 72-21-00 sets NORMAL below 2.0 NU, MONITOR from 2.0 to 3.5 NU and ESCALATE above 3.5 NU. Your 2.4 NU reading is MONITOR: record it and monitor 3 flight cycles.",
+        "F-GKXA reading 2.4 NU, what band?"
+    );
+    assert.equal(verdict.passed, true);
+});
+
+test("gradeBandClassification allows a correct answer that never names the band", () => {
+    // At 2.9 NU in cold conditions the right reply routes through the 2.5 NU
+    // trigger, not the band table. Requiring the band name failed six such
+    // answers on the live target.
+    const verdict = gradeBandClassification(
+        "You are past the 2.5 NU cold-weather trigger in AMM 72-00-00-810-001, so open the troubleshooting procedure in AMM 72-21-00.",
+        "F-GKXA, N1 at 2.9 NU, ambient 4 degrees."
+    );
+    assert.equal(verdict.passed, true);
+});
+
+test("gradeBandClassification reads band names case-sensitively", () => {
+    // Verbatim from the conflict-01 reference answer. "a cold-weather rise is
+    // normal" is the adjective, not a claim that the reading is in the NORMAL
+    // band, and a case-insensitive match flagged it.
+    const verdict = gradeBandClassification(
+        "AMM 72-00-00-810-001 says a cold-weather rise is normal, but it sets an explicit trigger at 2.5 NU. At 2.9 NU you are past that trigger. Treat this as a MONITOR-band finding.",
+        "F-GKXA, N1 at 2.9 NU, ambient 4 degrees."
+    );
+    assert.equal(verdict.passed, true);
+});
+
+test("gradeBandClassification does not apply without a classifiable reading", () => {
+    const verdict = gradeBandClassification(
+        "I don't have a torque value for the fan cowl latches.",
+        "What's the torque spec for the fan cowl latches?"
+    );
+    assert.equal(verdict.passed, true);
+    assert.match(verdict.detail, /no classifiable reading/);
 });
 
 // ── learner address ──────────────────────────

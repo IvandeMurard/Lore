@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────
 
 import OpenAI from "openai";
+import { enforceSopPrimacy } from "./sop-primacy";
 import {
   ORCHESTRATOR_PROMPT,
   ELICITATION_PROMPT,
@@ -55,6 +56,15 @@ export async function synthesizeResponse(
   sources: { sop: string[]; oral: string[]; history: string[] },
   options: { temperature?: number } = {}
 ) {
+  // Deliberately NOT injecting lib/bands.ts output here. Tried and reverted:
+  // stating the computed band in the context fixed the boundary cases and
+  // broke others, because a long normative block perturbs every answer rather
+  // than the one property it targets. Measured: 61/64 with a bare band, then
+  // 58/64 once the conditional caveats were added, against 53/53 at baseline.
+  //
+  // Bands are used as a grading oracle instead — see evals/graders.ts
+  // gradeBandClassification. Guaranteeing that a wrong band is *detected* is
+  // worth more than hoping a longer prompt prevents it.
   const context = `
 SOP EXCERPTS:
 ${sources.sop.join("\n---\n") || "No relevant SOP found."}
@@ -69,9 +79,11 @@ TECHNICIAN QUESTION:
 ${question}
 `.trim();
 
+  const temperature = options.temperature ?? LLM_CONFIG.synthesis.temperature;
+
   const res = await openai.chat.completions.create({
     model: LLM_CONFIG.model,
-    temperature: options.temperature ?? LLM_CONFIG.synthesis.temperature,
+    temperature,
     max_tokens: LLM_CONFIG.synthesis.max_tokens,
     messages: [
       { role: "system", content: SYNTHESIS_PROMPT },
@@ -79,7 +91,34 @@ ${question}
     ],
   });
 
-  return res.choices[0].message.content ?? "";
+  const draft = res.choices[0].message.content ?? "";
+
+  // SOP primacy is enforced here rather than requested in the prompt. Only
+  // answers that actually contradict a computable AMM rule are touched, so
+  // the other cases are left exactly as generated — the mistake made by
+  // injecting a normative block before generation.
+  const outcome = await enforceSopPrimacy(question, draft, async (correction) => {
+    const retry = await openai.chat.completions.create({
+      model: LLM_CONFIG.model,
+      temperature,
+      max_tokens: LLM_CONFIG.synthesis.max_tokens,
+      messages: [
+        { role: "system", content: SYNTHESIS_PROMPT },
+        { role: "user", content: context },
+        { role: "assistant", content: draft },
+        { role: "user", content: correction },
+      ],
+    });
+    return retry.choices[0].message.content ?? "";
+  });
+
+  if (outcome.status !== "clean") {
+    console.warn(
+      `[synthesis] SOP primacy ${outcome.status}: ${outcome.contradictions.join(" | ")}`
+    );
+  }
+
+  return outcome.response;
 }
 
 // ── ELICITATION (Capture knowledge) ──────────

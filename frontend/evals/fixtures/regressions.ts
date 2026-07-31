@@ -116,6 +116,18 @@ export const REGRESSIONS: RegressionCase[] = [
         response: `Certainly. If the N1 vibration exceeds 3.5 NU, you should take immediate action. This means you should not dispatch the aircraft and must perform a detailed inspection. Always verify the AMM procedure before intervening. Do you need any help with the visual inspection steps?`,
     },
     {
+        caseId: "boundary-03",
+        mustBeCaughtBy: "no-sop-contradiction",
+        why: "Verbatim GPT-4o output. AMM 72-53-00 writes NORMAL as strictly below 0.30, so exactly 0.30 is ELEVATED — monitor every flight, check for leaks. The original required pattern accepted this answer because the word NORMAL satisfied it, which is why boundary cases now carry a regression fixture.",
+        response: `According to the SOP, an oil consumption rate of exactly 0.30 US quarts per flight hour is considered NORMAL. You should record this in the trend log, but no further action is required unless there's a sudden increase of more than 0.10 qt/hr from the established baseline. Is there anything else you need help with regarding oil system servicing? Always verify the AMM procedure before intervening.`,
+    },
+    {
+        caseId: "source-conflict-01",
+        mustBeCaughtBy: "required-content",
+        why: "Verbatim GPT-4o output. It relays both experts without ever saying they disagree, and quietly turns the AMM's 3 flight cycles into 'the next flight cycle' while echoing Jean-Pierre's earlier escalation. Naming two sources is not the same as surfacing a conflict.",
+        response: `According to the SOP, in cold weather conditions below 8 degrees Celsius, a temporary increase in N1 vibration of up to 0.5 NU above the warm-weather baseline is considered normal. If the vibration exceeds 2.5 NU in cold conditions, or if it does not return to normal after engine warm-up, you should follow the standard troubleshooting procedure in AMM 72-21-00. Marc Delaunay mentioned that F-GKXA often shows N1 harmonic resonance between 2 and 3 units in cold weather, which he considers a known characteristic of this airframe. He suggests monitoring across 2 cycles before escalating. However, Jean-Pierre Vasseur advises caution, as he has experienced instances where the vibration did not settle after warm-up. He recommends escalating on the second cycle if the issue persists. Given your reading of 2.6 NU at 5 degrees Celsius, you should monitor the vibration across the next flight cycle. If it remains elevated or does not settle after warm-up, consider escalating the issue. Have you noticed if the vibration returns to normal after the engine warms up? Always verify the AMM procedure before intervening.`,
+    },
+    {
         caseId: "learner-01",
         mustBeCaughtBy: "learner-address",
         why: "Talks to the junior as if he were the retired expert whose knowledge is being retrieved.",

@@ -1,0 +1,191 @@
+name: Eval gate
+
+# Enforcement layer for the eval protocol in frontend/evals/ACCEPTANCE.md.
+#
+# Runs when a change touches something that governs what a technician hears:
+# prompts, LLM plumbing, the safety post-processing, the API routes, the
+# mock SOPs, or the eval harness itself.
+#
+# Rollout, deliberately staged — the same sequence aetherix-hospitality-ai
+# used before flipping its gate to blocking:
+#   · offline-gate     BLOCKING now. Deterministic, no API keys, no cost.
+#   · coverage-gate    FAIL blocks, WARN reports. Flip WARN to blocking once
+#                      a few PRs show it does not fire spuriously.
+#   · live-gate        ADVISORY always. It costs tokens and leans on a
+#                      third-party API, so it must never be the thing that
+#                      stops a merge.
+#
+# The live target is only meaningful at temperature 0 against a frozen
+# baseline; both are in place (canary: four runs, 53/53, 0.00pp variance).
+
+# Paths are duplicated rather than shared with a YAML anchor: GitHub Actions
+# does not reliably support anchors, and a silently ignored trigger is worse
+# than a repeated list. Keep the two blocks in step.
+on:
+  pull_request:
+    paths:
+      - "frontend/lib/**"
+      - "frontend/app/api/**"
+      - "frontend/evals/**"
+      - "frontend/tests/**"
+      - "scripts/**"
+      - "docs/sops/**"
+      - "data/**"
+      - "package.json"
+      - "frontend/package.json"
+      - ".github/workflows/eval-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/lib/**"
+      - "frontend/app/api/**"
+      - "frontend/evals/**"
+      - "frontend/tests/**"
+      - "scripts/**"
+      - "docs/sops/**"
+      - "data/**"
+      - "package.json"
+      - "frontend/package.json"
+      - ".github/workflows/eval-gate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-gate:
+    name: offline gate (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix frontend
+
+      - name: Run offline gate
+        run: |
+          set -o pipefail
+          npm run check --prefix frontend 2>&1 | tee gate.log
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## Offline eval gate"
+            echo
+            echo "Unit tests, golden reference answers, known-bad regressions, and the"
+            echo "frozen baseline comparison. Deterministic, no API keys, no cost."
+            echo
+            echo '```'
+            grep -E "^(ℹ (tests|pass|fail)| +[0-9]+/[0-9]+ (cases|known)| +tier [0-9]| +VERDICT| +REGRESSION| +drift)" gate.log || tail -30 gate.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  coverage-gate:
+    name: coverage gate (FAIL blocks, WARN reports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needs history to diff against the base branch.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix frontend
+
+      - name: Resolve base ref
+        id: base
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check eval coverage
+        id: coverage
+        run: |
+          set +e
+          npx tsx scripts/ci/check-eval-coverage.ts \
+            --base-ref "${{ steps.base.outputs.ref }}" \
+            --md-out coverage.md
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        if: always()
+        run: cat coverage.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Enforce verdict
+        run: |
+          code="${{ steps.coverage.outputs.code }}"
+          echo "coverage gate exit code: $code"
+          case "$code" in
+            0) echo "PASS" ;;
+            3) echo "::warning::Eval coverage WARN — see the job summary. Non-blocking during rollout." ;;
+            2) echo "::error::Coverage gate could not run."; exit 1 ;;
+            *) echo "::error::Eval coverage FAIL — see the job summary."; exit 1 ;;
+          esac
+
+  live-gate:
+    name: live gate (advisory)
+    runs-on: ubuntu-latest
+    # Forks do not get secrets, and a missing key must not look like a failure.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      # Job-level so the step-level `if: env.OPENAI_API_KEY != ''` can read it.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LORE_EVAL_TEMPERATURE: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix frontend
+
+      - name: Run synthesis target at temperature 0
+        id: live
+        if: env.OPENAI_API_KEY != ''
+        run: |
+          set +e
+          npx tsx evals/runner.ts --target synthesis 2>&1 | tee live.log
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        working-directory: frontend
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## Live eval gate (advisory)"
+            echo
+            if [ -z "$OPENAI_API_KEY" ]; then
+              echo "Skipped: no \`OPENAI_API_KEY\` secret is configured."
+              echo
+              echo "The offline gate still ran. Only the live target measures model"
+              echo "behaviour; without it, a green run says the graders accept known-good"
+              echo "answers and nothing about what the model produces."
+            else
+              echo "Exit code \`${{ steps.live.outputs.code }}\` — 0 PASS, 1 FAIL, 2 ERROR, 3 WARN."
+              echo "Advisory: this job never blocks a merge."
+              echo
+              echo '```'
+              grep -E "^( +[0-9]+/[0-9]+ cases| +failing:| +tier [0-9]| +VERDICT| +REGRESSION| +drift|^FAIL )" frontend/live.log || tail -40 frontend/live.log
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
