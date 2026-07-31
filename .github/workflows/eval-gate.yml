@@ -11,9 +11,10 @@ name: Eval gate
 #   · offline-gate     BLOCKING now. Deterministic, no API keys, no cost.
 #   · coverage-gate    FAIL blocks, WARN reports. Flip WARN to blocking once
 #                      a few PRs show it does not fire spuriously.
-#   · live-gate        ADVISORY always. It costs tokens and leans on a
-#                      third-party API, so it must never be the thing that
-#                      stops a merge. Roughly 70 model calls per run.
+#   · live-gate        ADVISORY and OPT-IN. Label a PR `run-live-eval`, or
+#                      run the workflow by hand. Roughly 70 model calls per
+#                      run, about €0.25-0.30. It must never be the thing that
+#                      stops a merge, and it must never spend unasked.
 #
 # The live target is only meaningful at temperature 0 against a frozen
 # baseline; both are in place. Canary on the enforced pipeline: three runs,
@@ -29,7 +30,11 @@ name: Eval gate
 # does not reliably support anchors, and a silently ignored trigger is worse
 # than a repeated list. Keep the two blocks in step.
 on:
+  # `labeled` matters: it is how adding run-live-eval to an open PR triggers
+  # the paid job without a fresh push.
+  workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths:
       - "frontend/lib/**"
       - "frontend/app/api/**"
@@ -91,6 +96,17 @@ jobs:
             echo '```'
             grep -E "^(ℹ (tests|pass|fail)| +[0-9]+/[0-9]+ (cases|known)| +tier [0-9]| +VERDICT| +REGRESSION| +drift)" gate.log || tail -30 gate.log
             echo '```'
+            echo
+            # Said here, on the free job, so that the absence of a paid
+            # measurement is visible on every PR rather than inferable from a
+            # missing check.
+            echo "This job measures the ruler: graders, reference answers,"
+            echo "known-bad regressions, baseline comparison. It does not call a"
+            echo "model, so it says nothing about what a technician would hear."
+            echo
+            echo "For that, add the \`run-live-eval\` label to this PR — roughly"
+            echo "70 model calls, about €0.25-0.30. Worth it when a prompt, a"
+            echo "grader or the case set changed; not otherwise."
           } >> "$GITHUB_STEP_SUMMARY"
 
   coverage-gate:
@@ -146,10 +162,27 @@ jobs:
           esac
 
   live-gate:
-    name: live gate (advisory)
+    name: live gate (advisory, opt-in)
     runs-on: ubuntu-latest
-    # Forks do not get secrets, and a missing key must not look like a failure.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # Opt-in, and the reason is not only money.
+    #
+    # A full run is roughly 70 model calls, about €0.25-0.30 measured against
+    # real spend. Running it on every PR touching lib/, evals/ or the mock
+    # SOPs meant a handful of documentation changes could exhaust a small
+    # budget without anyone asking for a measurement.
+    #
+    # The stronger reason: there is a frozen baseline at 64/64. Re-measuring
+    # only carries information when a prompt, a grader or the case set
+    # changes. On a PR that touches a test or a doc, the paid run pays to
+    # confirm what is already known.
+    #
+    # So: add the `run-live-eval` label to a PR, or run the workflow by hand.
+    # Push to main deliberately does NOT trigger it — unattended spend is the
+    # thing being avoided. Forks are excluded because they do not get secrets.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'run-live-eval'))
     env:
       # Job-level so the step-level `if: env.OPENAI_API_KEY != ''` can read it.
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
