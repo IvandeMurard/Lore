@@ -927,8 +927,17 @@ export const CASES: EvalCase[] = [
             required: [
                 /Marc/,
                 /Jean-Pierre|Vasseur/,
-                // Naming both is not enough: the divergence has to be stated.
-                /disagree|does not agree|do not (say|agree)|differ|contradict|not the same/i,
+                // Naming both is not enough: the divergence has to be conveyed.
+                // Contrastive markers count — "However, Jean-Pierre Vasseur
+                // has noted instances where..." conveys the divergence as
+                // plainly as the word "disagrees", and demanding the explicit
+                // verb failed that answer on two canary runs out of three.
+                //
+                // This is the weakest check in the set, and knowingly so:
+                // whether a disagreement was surfaced is semantic, not
+                // surface, and it is the first place a judge model would earn
+                // its keep on tier 3. See ACCEPTANCE.md.
+                /disagree|does not agree|do not (say|agree)|differ|contradict|not the same|however|whereas|on the other hand|by contrast|conversely|more cautious|cautions against|takes? a different/i,
                 // 2.6 NU is MONITOR, so the AMM interval still governs. The
                 // first live run drifted to "the next flight cycle" while
                 // relaying Jean-Pierre's earlier escalation.

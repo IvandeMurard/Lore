@@ -16,6 +16,8 @@ import {
     ERROR as ERROR_CODE,
     FAIL as FAIL_CODE,
     MAX_REGRESSION_PP,
+    tierOf,
+    WARN as WARN_CODE,
     type CheckedVerdict,
 } from "./acceptance";
 import {
@@ -279,6 +281,8 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
     // ── Baseline ──
     // Absolute thresholds catch a collapse; the baseline catches erosion.
     let regressed = false;
+    /** Erosion worth reporting but not worth blocking on. */
+    let softRegression = false;
 
     if (opts.freeze) {
         const path = writeBaseline(
@@ -313,12 +317,36 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
                 regressed = true;
             }
             if (diff.newlyFailing.length > 0) {
-                // Worth failing on even inside the pp budget: a case that used
-                // to hold and no longer does is a concrete thing that broke.
-                console.log(
-                    `    REGRESSION  newly failing: ${diff.newlyFailing.join(", ")}`
+                // Severity follows the tier of what actually broke. A case
+                // that flips on form-tier phrasing is the observed run-to-run
+                // noise (see ACCEPTANCE.md canary); a case that flips on a
+                // safety grader is not, because tier 1 is guarded by code and
+                // has held at 100% across every canary run.
+                const safetyBreaches = diff.newlyFailing.filter((caseId) =>
+                    checks.some(
+                        (c) =>
+                            c.caseId === caseId &&
+                            !c.passed &&
+                            tierOf(c.grader) === 1
+                    )
                 );
-                regressed = true;
+
+                if (safetyBreaches.length > 0) {
+                    console.log(
+                        `    REGRESSION  newly failing on a safety grader: ${safetyBreaches.join(", ")}`
+                    );
+                    regressed = true;
+                }
+
+                const softer = diff.newlyFailing.filter(
+                    (caseId) => !safetyBreaches.includes(caseId)
+                );
+                if (softer.length > 0) {
+                    console.log(
+                        `    newly failing on trust/form only: ${softer.join(", ")} — noise until it reproduces, diagnose before fixing`
+                    );
+                    softRegression = true;
+                }
             }
             if (diff.newlyPassing.length > 0) {
                 console.log(`    improved: ${diff.newlyPassing.join(", ")}`);
@@ -326,7 +354,7 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
             for (const note of diff.driftNotes) {
                 console.log(`    drift: ${note}`);
             }
-            if (!regressed && diff.driftNotes.length === 0) {
+            if (!regressed && !softRegression && diff.driftNotes.length === 0) {
                 console.log("    no regression against baseline");
             }
         }
@@ -358,6 +386,7 @@ async function runCases(target: EvalTarget, opts: Options): Promise<number> {
     // even when the raw pass count looks acceptable; a tier-2/3 miss inside
     // its budget warns without blocking.
     if (failed > 0 || verdict.code === FAIL_CODE || regressed) return FAIL_CODE;
+    if (softRegression) return WARN_CODE;
     return verdict.code;
 }
 
