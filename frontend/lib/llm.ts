@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────
 
 import OpenAI from "openai";
+import { enforceSopPrimacy } from "./sop-primacy";
 import {
   ORCHESTRATOR_PROMPT,
   ELICITATION_PROMPT,
@@ -78,9 +79,11 @@ TECHNICIAN QUESTION:
 ${question}
 `.trim();
 
+  const temperature = options.temperature ?? LLM_CONFIG.synthesis.temperature;
+
   const res = await openai.chat.completions.create({
     model: LLM_CONFIG.model,
-    temperature: options.temperature ?? LLM_CONFIG.synthesis.temperature,
+    temperature,
     max_tokens: LLM_CONFIG.synthesis.max_tokens,
     messages: [
       { role: "system", content: SYNTHESIS_PROMPT },
@@ -88,7 +91,34 @@ ${question}
     ],
   });
 
-  return res.choices[0].message.content ?? "";
+  const draft = res.choices[0].message.content ?? "";
+
+  // SOP primacy is enforced here rather than requested in the prompt. Only
+  // answers that actually contradict a computable AMM rule are touched, so
+  // the other cases are left exactly as generated — the mistake made by
+  // injecting a normative block before generation.
+  const outcome = await enforceSopPrimacy(question, draft, async (correction) => {
+    const retry = await openai.chat.completions.create({
+      model: LLM_CONFIG.model,
+      temperature,
+      max_tokens: LLM_CONFIG.synthesis.max_tokens,
+      messages: [
+        { role: "system", content: SYNTHESIS_PROMPT },
+        { role: "user", content: context },
+        { role: "assistant", content: draft },
+        { role: "user", content: correction },
+      ],
+    });
+    return retry.choices[0].message.content ?? "";
+  });
+
+  if (outcome.status !== "clean") {
+    console.warn(
+      `[synthesis] SOP primacy ${outcome.status}: ${outcome.contradictions.join(" | ")}`
+    );
+  }
+
+  return outcome.response;
 }
 
 // ── ELICITATION (Capture knowledge) ──────────

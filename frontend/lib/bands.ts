@@ -26,6 +26,14 @@ export type Band = {
     action: string;
     lower: Bound;
     upper: Bound;
+    /**
+     * Monitoring interval the band prescribes, in flight cycles.
+     *
+     * Broken out because it is the parameter the captured experts contradict:
+     * both Marc and Jean-Pierre work to 2 cycles where the AMM MONITOR band
+     * requires 3, and the model relayed theirs while dropping the manual's.
+     */
+    monitorCycles?: number;
 };
 
 export type BandTable = {
@@ -79,6 +87,7 @@ export const N1_VIBRATION: BandTable = {
                 "Record reading. Monitor 3 flight cycles. Visual inspection of the fan section.",
             lower: { value: 2.0, inclusive: true },
             upper: { value: 3.5, inclusive: true },
+            monitorCycles: 3,
         },
         {
             name: "ESCALATE",
@@ -225,6 +234,126 @@ export function classifyReadings(text: string): ClassifiedReading[] {
     }
 
     return found;
+}
+
+// ── Contradiction detection ──────────────────
+// One implementation, two callers: the eval grader and the runtime enforcer.
+// Two copies of a safety check is one copy too many — the same reason
+// prompt-parity.test.ts exists.
+
+export type BandContradiction = {
+    reading: ClassifiedReading;
+    kind: "wrong-band" | "shortened-interval";
+    detail: string;
+    /** The correction to state, in the manual's own terms. */
+    correction: string;
+};
+
+const NUMBER_WORDS: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+};
+
+/** Monitoring intervals the response prescribes, in flight cycles. */
+function statedIntervals(text: string): number[] {
+    const re =
+        /monitor(?:ing|ed)?\b[^.]{0,40}?\b(\d+|one|two|three|four|five)\s+(?:consecutive\s+)?(?:flight\s+)?cycles?\b/gi;
+    const found: number[] = [];
+
+    for (const match of text.matchAll(re)) {
+        const token = match[1].toLowerCase();
+        const value = NUMBER_WORDS[token] ?? Number.parseInt(token, 10);
+        if (!Number.isNaN(value)) found.push(value);
+    }
+
+    return found;
+}
+
+// Words that turn a band name into a claim about the reading. Reciting the
+// table ("NORMAL below 2.0 NU, MONITOR 2.0 - 3.5") carries none of them,
+// which is what keeps this from firing on a correct explanation.
+//
+// "still" and "remains" were added after a test fixture wrote "Still NORMAL
+// as far as I can tell" and slipped through: a verb-less assertion is still
+// an assertion.
+const BAND_ASSERTION =
+    String.raw`([Ii]s|[Aa]re|[Ff]alls?\s+(in|into|under)|[Cc]onsidered|[Cc]lassified\s+as|[Ww]ould\s+be|[Rr]emains|[Ss]tays|[Ss]till|[Cc]ounts\s+as|[Qq]ualifies\s+as|[Rr]eads\s+as)`;
+
+function assertsBand(text: string, name: string): boolean {
+    // Case-sensitive on the band name. "a cold-weather rise is normal" is the
+    // adjective; "is NORMAL" is the band. The AMM writes band names in
+    // capitals and every observed response reproduces them that way.
+    return new RegExp(
+        String.raw`\b${BAND_ASSERTION}\s+(the\s+)?(?:"|')?${name}\b`
+    ).test(text);
+}
+
+export function findBandContradictions(
+    response: string,
+    question: string
+): BandContradiction[] {
+    const found: BandContradiction[] = [];
+
+    for (const reading of classifyReadings(question)) {
+        const { value, table, band } = reading;
+        if (!band) continue;
+
+        // 1. A different band asserted of the reading.
+        const wrong = table.bands
+            .map((b) => b.name)
+            .filter((name) => name !== band.name)
+            .find((name) => assertsBand(response, name));
+
+        if (wrong) {
+            found.push({
+                reading,
+                kind: "wrong-band",
+                detail: `${value} ${table.unit} is ${band.name} per ${table.reference} (${band.notation}), but the response asserts ${wrong}`,
+                correction: `${value} ${table.unit} is ${band.name} per ${table.reference} (band: ${band.notation}). ${band.action}`,
+            });
+            continue;
+        }
+
+        // 2. A shorter monitoring interval standing alone. Quoting an expert's
+        // shorter interval is fine; letting it stand without the manual's is
+        // not, and that is the failure the source-conflict cases found.
+        if (band.monitorCycles !== undefined) {
+            const stated = statedIntervals(response);
+            const mentionsPrescribed = stated.includes(band.monitorCycles);
+            const mentionsShorter = stated.some((n) => n < band.monitorCycles!);
+
+            if (mentionsShorter && !mentionsPrescribed) {
+                found.push({
+                    reading,
+                    kind: "shortened-interval",
+                    detail: `${band.name} per ${table.reference} requires ${band.monitorCycles} flight cycles; the response states ${stated.join(", ")} and never the prescribed interval`,
+                    correction: `${band.name} per ${table.reference} requires monitoring ${band.monitorCycles} flight cycles. A shorter interval from a captured note does not replace it.`,
+                });
+            }
+        }
+    }
+
+    return found;
+}
+
+/**
+ * The answer of last resort: the manual, and nothing else. Used when a
+ * contradiction survives one correction attempt, so the pipeline fails
+ * closed onto the SOP rather than shipping a contradiction.
+ */
+export function buildDeterministicVerdict(question: string): string {
+    const readings = classifyReadings(question).filter((r) => r.band !== null);
+    if (readings.length === 0) return "";
+
+    return readings
+        .map(
+            ({ value, table, band }) =>
+                `Per ${table.reference}, ${value} ${table.unit} ${table.metric} is ${band!.name} (band: ${band!.notation}). ${band!.action}`
+        )
+        .join(" ");
 }
 
 /**

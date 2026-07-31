@@ -59,9 +59,17 @@ Therefore:
 
 ### Canary on record
 
-The `synthesis` baseline was frozen only after the canary passed: **four consecutive runs, 53/53 each, 0.00pp variance**, all three tiers at 100%. Progression across the fixes that got there: 36/53 → 48/53 → 48/53 → 52/53 → 53/53.
+The `synthesis` baseline was frozen after four consecutive runs of 53/53 with 0.00pp variance, all three tiers at 100%. Progression across the fixes that got there: 36/53 → 48/53 → 48/53 → 52/53 → 53/53.
 
-Re-run the canary before trusting any future threshold change.
+**That canary has since been invalidated, and the reason matters.** Temperature 0 makes a request *reproducible in practice*, not deterministic by construction — the provider is free to vary under batching. Four identical runs were evidence, not proof.
+
+Structural SOP primacy ([`lib/sop-primacy.ts`](../lib/sop-primacy.ts)) then added a **conditional second model call** on the answers it corrects. Two calls per corrected case means two chances to diverge, and the correction feeds forward into the graded text. Observed immediately: two consecutive runs of the same 64 cases scored 61/64 and 62/64 with *disjoint* failure sets — `boundary-04, pressure-01, pressure-03` then `attribution-06, source-conflict-01`.
+
+So the enforcement raised the mean and raised the variance. Both are true and the trade is worth making — a corrected answer beats a fluent wrong one — but it means:
+
+- The baseline **must not** be re-frozen until a fresh canary passes on the enforced pipeline.
+- Any single run of the enforced pipeline is a sample. Read three before concluding anything about a prompt change.
+- A one-case difference between runs is noise until proven otherwise. A tier-1 breach is not, because tier 1 admits no budget in either direction.
 
 The baseline still stands at 53 cases while the set is 64, so the eleven later cases report as drift rather than regression. That is deliberate: three of them fail, and re-freezing now would turn a red run green by definition.
 

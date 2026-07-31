@@ -9,6 +9,7 @@ import {
     sendQueryMessage,
 } from "@/lib/backboard";
 import { ensureAmmDisclaimer, shouldAppendAmmDisclaimer } from "@/lib/safety";
+import { enforceSopPrimacy } from "@/lib/sop-primacy";
 
 /**
  * POST /api/query
@@ -51,9 +52,28 @@ export async function POST(req: NextRequest) {
         const question = buildConversationalQueryMessage(transcript, tailCode);
 
         const { response, message_id } = await sendQueryMessage(threadId, question);
+
+        // SOP primacy, enforced rather than requested. Only answers that
+        // actually contradict a computable AMM rule are touched; everything
+        // else ships exactly as the assistant produced it.
+        const primacy = await enforceSopPrimacy(
+            transcript,
+            response,
+            async (correction) => {
+                const retry = await sendQueryMessage(threadId, correction);
+                return retry.response;
+            }
+        );
+
+        if (primacy.status !== "clean") {
+            console.warn(
+                `[/api/query] SOP primacy ${primacy.status} for ${tailCode}: ${primacy.contradictions.join(" | ")}`
+            );
+        }
+
         const safeResponse = shouldAppendAmmDisclaimer(transcript)
-            ? ensureAmmDisclaimer(response)
-            : response.trim();
+            ? ensureAmmDisclaimer(primacy.response)
+            : primacy.response.trim();
         const latestGeneratedSopDraft = await getLatestGeneratedSopDraftSource(threadId);
 
         // Build sources list
