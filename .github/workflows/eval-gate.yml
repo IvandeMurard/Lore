@@ -13,10 +13,17 @@ name: Eval gate
 #                      a few PRs show it does not fire spuriously.
 #   · live-gate        ADVISORY always. It costs tokens and leans on a
 #                      third-party API, so it must never be the thing that
-#                      stops a merge.
+#                      stops a merge. Roughly 70 model calls per run.
 #
 # The live target is only meaningful at temperature 0 against a frozen
-# baseline; both are in place (canary: four runs, 53/53, 0.00pp variance).
+# baseline; both are in place. Canary on the enforced pipeline: three runs,
+# tier 1 at 100.0% every time (0.00pp), all variance in tier 3 at 0.6pp.
+#
+# Note what "advisory" costs. On this workflow's first run all three jobs
+# reported success while the live job never called a model — no secret was
+# configured. A green check that measured nothing is the failure mode this
+# whole harness exists to remove, so the skip path now raises a warning
+# annotation rather than passing quietly.
 
 # Paths are duplicated rather than shared with a YAML anchor: GitHub Actions
 # does not reliably support anchors, and a silently ignored trigger is worse
@@ -56,9 +63,9 @@ jobs:
     name: offline gate (blocking)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -90,12 +97,12 @@ jobs:
     name: coverage gate (FAIL blocks, WARN reports)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Needs history to diff against the base branch.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -148,9 +155,9 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       LORE_EVAL_TEMPERATURE: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -175,11 +182,19 @@ jobs:
             echo "## Live eval gate (advisory)"
             echo
             if [ -z "$OPENAI_API_KEY" ]; then
-              echo "Skipped: no \`OPENAI_API_KEY\` secret is configured."
+              # Loud on purpose. This job reports success when it skips, so
+              # without an annotation a missing or expired key reads as a
+              # green check that measured nothing — the exact false comfort
+              # this harness exists to remove. First run of this workflow
+              # passed all three jobs while the live one never called a model.
+              echo "::warning title=Live eval not measured::No OPENAI_API_KEY secret — the live gate reported success without running any eval. Model behaviour is unmeasured on this PR."
+              echo "**Not measured.** No \`OPENAI_API_KEY\` secret is configured, so this job"
+              echo "reported success without calling a model."
               echo
-              echo "The offline gate still ran. Only the live target measures model"
-              echo "behaviour; without it, a green run says the graders accept known-good"
-              echo "answers and nothing about what the model produces."
+              echo "The offline gate still ran, and it is worth something: 90 deterministic"
+              echo "checks over the graders, the reference answers and the known-bad"
+              echo "regressions. But it measures the ruler. Only the live target measures"
+              echo "the product, so treat this PR as unmeasured on model behaviour."
             else
               echo "Exit code \`${{ steps.live.outputs.code }}\` — 0 PASS, 1 FAIL, 2 ERROR, 3 WARN."
               echo "Advisory: this job never blocks a merge."
