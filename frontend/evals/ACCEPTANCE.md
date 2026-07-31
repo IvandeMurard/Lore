@@ -116,6 +116,7 @@ The live job must never block a merge. It costs tokens and leans on a third-part
 
 Honest list of what this file specifies but the harness does not yet do:
 
+- **The live gate is opt-in, so a prompt change can merge unmeasured.** Label a PR `run-live-eval`, or run the workflow by hand. That is a decision rather than an omission: a full run is roughly 70 model calls, about €0.25-0.30 measured against real spend, and a handful of documentation PRs would exhaust a small budget without anyone asking for a measurement. Re-measuring only carries information when a prompt, a grader or the case set changes — against a frozen baseline at 64/64, a paid run on a PR touching a test pays to confirm what is already known. What stays open: nobody is obliged to add the label, and human steps get skipped.
 - **Coverage WARN does not block.** Changing a prompt without touching the case set only reports. Flip it once the case set stops moving every week.
 - **No semantic grader.** Every grader is a regex over surface form, so all four false-positive rounds were meaning the patterns could not see. This is where an LLM judge earns its place — as a second opinion on tiers 2 and 3, never as the tier-1 gate.
 - **The `synthesis` prompt is still not the one that answers.** `/api/query` delegates to Backboard, so the rule lives in two places and `prompt-parity.test.ts` is all that keeps them together.

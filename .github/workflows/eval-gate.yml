@@ -11,18 +11,30 @@ name: Eval gate
 #   · offline-gate     BLOCKING now. Deterministic, no API keys, no cost.
 #   · coverage-gate    FAIL blocks, WARN reports. Flip WARN to blocking once
 #                      a few PRs show it does not fire spuriously.
-#   · live-gate        ADVISORY always. It costs tokens and leans on a
-#                      third-party API, so it must never be the thing that
-#                      stops a merge.
+#   · live-gate        ADVISORY and OPT-IN. Label a PR `run-live-eval`, or
+#                      run the workflow by hand. Roughly 70 model calls per
+#                      run, about €0.25-0.30. It must never be the thing that
+#                      stops a merge, and it must never spend unasked.
 #
 # The live target is only meaningful at temperature 0 against a frozen
-# baseline; both are in place (canary: four runs, 53/53, 0.00pp variance).
+# baseline; both are in place. Canary on the enforced pipeline: three runs,
+# tier 1 at 100.0% every time (0.00pp), all variance in tier 3 at 0.6pp.
+#
+# Note what "advisory" costs. On this workflow's first run all three jobs
+# reported success while the live job never called a model — no secret was
+# configured. A green check that measured nothing is the failure mode this
+# whole harness exists to remove, so the skip path now raises a warning
+# annotation rather than passing quietly.
 
 # Paths are duplicated rather than shared with a YAML anchor: GitHub Actions
 # does not reliably support anchors, and a silently ignored trigger is worse
 # than a repeated list. Keep the two blocks in step.
 on:
+  # `labeled` matters: it is how adding run-live-eval to an open PR triggers
+  # the paid job without a fresh push.
+  workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths:
       - "frontend/lib/**"
       - "frontend/app/api/**"
@@ -56,9 +68,9 @@ jobs:
     name: offline gate (blocking)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -84,18 +96,29 @@ jobs:
             echo '```'
             grep -E "^(ℹ (tests|pass|fail)| +[0-9]+/[0-9]+ (cases|known)| +tier [0-9]| +VERDICT| +REGRESSION| +drift)" gate.log || tail -30 gate.log
             echo '```'
+            echo
+            # Said here, on the free job, so that the absence of a paid
+            # measurement is visible on every PR rather than inferable from a
+            # missing check.
+            echo "This job measures the ruler: graders, reference answers,"
+            echo "known-bad regressions, baseline comparison. It does not call a"
+            echo "model, so it says nothing about what a technician would hear."
+            echo
+            echo "For that, add the \`run-live-eval\` label to this PR — roughly"
+            echo "70 model calls, about €0.25-0.30. Worth it when a prompt, a"
+            echo "grader or the case set changed; not otherwise."
           } >> "$GITHUB_STEP_SUMMARY"
 
   coverage-gate:
     name: coverage gate (FAIL blocks, WARN reports)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Needs history to diff against the base branch.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -139,18 +162,35 @@ jobs:
           esac
 
   live-gate:
-    name: live gate (advisory)
+    name: live gate (advisory, opt-in)
     runs-on: ubuntu-latest
-    # Forks do not get secrets, and a missing key must not look like a failure.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # Opt-in, and the reason is not only money.
+    #
+    # A full run is roughly 70 model calls, about €0.25-0.30 measured against
+    # real spend. Running it on every PR touching lib/, evals/ or the mock
+    # SOPs meant a handful of documentation changes could exhaust a small
+    # budget without anyone asking for a measurement.
+    #
+    # The stronger reason: there is a frozen baseline at 64/64. Re-measuring
+    # only carries information when a prompt, a grader or the case set
+    # changes. On a PR that touches a test or a doc, the paid run pays to
+    # confirm what is already known.
+    #
+    # So: add the `run-live-eval` label to a PR, or run the workflow by hand.
+    # Push to main deliberately does NOT trigger it — unattended spend is the
+    # thing being avoided. Forks are excluded because they do not get secrets.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'run-live-eval'))
     env:
       # Job-level so the step-level `if: env.OPENAI_API_KEY != ''` can read it.
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       LORE_EVAL_TEMPERATURE: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -175,11 +215,19 @@ jobs:
             echo "## Live eval gate (advisory)"
             echo
             if [ -z "$OPENAI_API_KEY" ]; then
-              echo "Skipped: no \`OPENAI_API_KEY\` secret is configured."
+              # Loud on purpose. This job reports success when it skips, so
+              # without an annotation a missing or expired key reads as a
+              # green check that measured nothing — the exact false comfort
+              # this harness exists to remove. First run of this workflow
+              # passed all three jobs while the live one never called a model.
+              echo "::warning title=Live eval not measured::No OPENAI_API_KEY secret — the live gate reported success without running any eval. Model behaviour is unmeasured on this PR."
+              echo "**Not measured.** No \`OPENAI_API_KEY\` secret is configured, so this job"
+              echo "reported success without calling a model."
               echo
-              echo "The offline gate still ran. Only the live target measures model"
-              echo "behaviour; without it, a green run says the graders accept known-good"
-              echo "answers and nothing about what the model produces."
+              echo "The offline gate still ran, and it is worth something: 90 deterministic"
+              echo "checks over the graders, the reference answers and the known-bad"
+              echo "regressions. But it measures the ruler. Only the live target measures"
+              echo "the product, so treat this PR as unmeasured on model behaviour."
             else
               echo "Exit code \`${{ steps.live.outputs.code }}\` — 0 PASS, 1 FAIL, 2 ERROR, 3 WARN."
               echo "Advisory: this job never blocks a merge."
