@@ -97,6 +97,32 @@ Lore:   "Logged. F-GKXA memory updated."
 
 ---
 
+## How the answers are checked
+
+The failure mode here is not a crash. It is a well-formed answer carrying the wrong threshold, and test coverage cannot see that. So the answers are graded, not just the code.
+
+**64 cases across 12 categories, 9 graders, every one a pure function.** A grader that needs a model to decide cannot gate a safety property, because it fails in the same way as the thing it grades.
+
+Not every failure is equal, so they are tiered:
+
+| Tier | Threshold | What it covers |
+|---|---|---|
+| safety | **100%**, no budget | invented figures, a refusal followed by a guess, contradicting the procedure, manufactured consensus |
+| trust | 95% | named attribution, procedure cited first |
+| form | 90% | wording and closing discipline |
+
+One run scored 52 of 53 and was declared a failure, because the single miss sat in tier 1.
+
+```bash
+npm run check   # offline gate: tests, golden answers, regressions. No API keys, no cost.
+```
+
+CI runs the offline gate on every pull request and blocks on failure. The live target costs tokens and a third-party API, so it runs only when a pull request carries the `run-live-eval` label: CI should not be able to spend money on its own initiative.
+
+See [`frontend/evals/README.md`](frontend/evals/README.md) for the invariants and [`frontend/evals/ACCEPTANCE.md`](frontend/evals/ACCEPTANCE.md) for what "green" means. The protocol behind it, and where it came from, is written up in [Harnesses, graders, closed loops](https://ivandemurard.com/journal/harnesses-graders-closed-loops).
+
+---
+
 ## Author
 
 **Ivan de Murard** — [@IvandeMurard](https://github.com/IvandeMurard)
