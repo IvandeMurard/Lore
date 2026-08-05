@@ -97,6 +97,14 @@ Lore:   "Logged. F-GKXA memory updated."
 
 ---
 
+## Where this sits, for readers arriving with the digital twin vocabulary
+
+Digital twins in most industries model an asset: a building, an engine, a warehouse. The extension toward people is more recent, and the reference work on [human-centered digital twins](https://pmc.ncbi.nlm.nih.gov/articles/PMC13078991/) frames it as modelling a worker in order to **support human judgement rather than replace it** — which is exactly the constraint here, since in Part-145 maintenance a licensed technician signs the release and nothing else can.
+
+Lore sits on that human-centered layer: it models what a technician knows, not what a machine does. It is **not** a decision twin. That label implies simulating a policy before applying it — "if I change this threshold, what happens" — and Lore has no such capability, nor the ground truth it would need. Nothing tells it whether a captured observation was right, and the moment a technician escalates the counterfactual disappears. Building simulation on top of what Lore captures is a plausible next system. It is not this one.
+
+---
+
 ## Author
 
 **Ivan de Murard** — [@IvandeMurard](https://github.com/IvandeMurard)
